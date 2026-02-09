@@ -4,11 +4,11 @@ import streamlit as st
 import requests
 from openai import OpenAI
 
-# ================== CONFIGURAÇÃO BÁSICA ==================
+# ================== CONFIGURAÇÃO ==================
 st.set_page_config(page_title="Treinamento EMP", layout="centered")
 st.title("Treinamento EMP")
 
-# ================== CONTROLE DE SESSÃO ==================
+# ================== ESTADO ==================
 if "logged" not in st.session_state:
     st.session_state.logged = False
 if "running" not in st.session_state:
@@ -25,7 +25,6 @@ if not st.session_state.logged:
     st.subheader("Login")
     user = st.text_input("Usuário")
     password = st.text_input("Senha", type="password")
-
     if st.button("Entrar"):
         if user and password:
             st.session_state.logged = True
@@ -78,9 +77,7 @@ def google_search(empresa: str) -> str:
     }
     r = requests.get("https://www.googleapis.com/customsearch/v1", params=params, timeout=15)
     data = r.json()
-    textos = []
-    for item in data.get("items", []):
-        textos.append(item.get("snippet", ""))
+    textos = [item.get("snippet", "") for item in data.get("items", [])]
     return "\n".join(textos)
 
 def gerar_resposta(curriculo, vaga, empresa, pergunta):
@@ -89,9 +86,9 @@ def gerar_resposta(curriculo, vaga, empresa, pergunta):
 
     prompt_dev = (
         "Você é um treinador de entrevista.\n"
-        "Use apenas currículo, vaga e contexto real de mercado.\n"
-        "Não invente informações.\n"
-        "Responda rápido.\n"
+        "Use APENAS currículo, vaga e contexto real de mercado.\n"
+        "NÃO invente informações.\n"
+        "Resposta rápida.\n"
         "Limite: até 8 linhas; se for case, até 10 linhas."
     )
 
@@ -121,7 +118,7 @@ Responda como candidato.
     )
     return resp.output_text.strip()
 
-# ================== INTERFACE PRINCIPAL ==================
+# ================== INTERFACE ==================
 st.subheader("Sessão de Treinamento")
 
 col1, col2 = st.columns(2)
@@ -141,7 +138,7 @@ if not st.session_state.running:
 
 empresa = st.text_input("Empresa")
 
-curr_file = st.file_uploader("Anexar currículo", type=["pdf", "docx", "txt"])
+curr_file = st.file_uploader("Anexar currículo (PDF/DOCX/TXT)", type=["pdf", "docx", "txt"])
 vaga_text = st.text_area("Descrição da vaga")
 
 if st.button("Carregar dados"):
@@ -154,24 +151,31 @@ if not st.session_state.curriculo or not st.session_state.vaga or not empresa:
 
 audio_file = st.file_uploader("Pergunta em áudio (mp3/wav/m4a)", type=["mp3", "wav", "m4a"])
 
-if st.button("Transcrever pergunta"):
-    client = OpenAI()
-    tr = client.audio.transcriptions.create(
-        model="gpt-4o-mini-transcribe",
-        file=(audio_file.name, audio_file.read()),
-    )
-    st.session_state.transcricao = tr.text
+# ===== BOTÃO ÚNICO =====
+if st.button("Iniciar pergunta"):
+    if not audio_file:
+        st.warning("Envie o áudio da pergunta.")
+        st.stop()
 
-if st.session_state.transcricao:
+    client = OpenAI()
+
+    with st.spinner("Escutando e transcrevendo..."):
+        tr = client.audio.transcriptions.create(
+            model="gpt-4o-mini-transcribe",
+            file=(audio_file.name, audio_file.read()),
+        )
+        st.session_state.transcricao = tr.text
+
     st.markdown("**Pergunta transcrita:**")
     st.write(st.session_state.transcricao)
 
-if st.button("Gerar resposta"):
-    resposta = gerar_resposta(
-        st.session_state.curriculo,
-        st.session_state.vaga,
-        empresa,
-        st.session_state.transcricao,
-    )
+    with st.spinner("Gerando resposta..."):
+        resposta = gerar_resposta(
+            st.session_state.curriculo,
+            st.session_state.vaga,
+            empresa,
+            st.session_state.transcricao,
+        )
+
     st.markdown("### Resposta")
     st.write(resposta)
