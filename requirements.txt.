@@ -1,6 +1,5 @@
 streamlit
 openai
-requests
+audio-recorder-streamlit
 PyPDF2
 python-docx
-audio-recorder-streamlit
