@@ -1,5 +1,6 @@
 streamlit
-openai==1.12.0
+openai
 audio-recorder-streamlit
 PyPDF2
 python-docx
+requests
