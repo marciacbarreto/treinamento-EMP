@@ -1,35 +1,38 @@
 import streamlit as st
 import io
+import hashlib
 from openai import OpenAI
 from audio_recorder_streamlit import audio_recorder
+import PyPDF2
+import docx
 
-# --- CONFIGURAÇÃO INICIAL ---
+# --- CONFIGURAÇÃO E ESTADO ---
 st.set_page_config(page_title="Treinamento EMP", layout="wide")
 
-# Inicialização das variáveis de estado
-if "logged" not in st.session_state:
-    st.session_state.logged = False
-if "analise_gerada" not in st.session_state:
-    st.session_state.analise_gerada = False
-if "modo_entrevista" not in st.session_state:
-    st.session_state.modo_entrevista = False
-if "empresa" not in st.session_state:
-    st.session_state.empresa = ""
-if "vaga" not in st.session_state:
-    st.session_state.vaga = ""
-if "analise_estrategica" not in st.session_state:
-    st.session_state.analise_estrategica = ""
-if "transcricao" not in st.session_state:
-    st.session_state.transcricao = ""
-if "resposta_ideal" not in st.session_state:
-    st.session_state.resposta_ideal = ""
-if "last_audio_len" not in st.session_state:
-    st.session_state.last_audio_len = 0
+defaults = {
+    "logged": False, "analise_gerada": False, "modo_entrevista": False,
+    "empresa": "", "vaga": "", "analise_estrategica": "",
+    "transcricao": "", "resposta_ideal": "", "last_audio_hash": ""
+}
+for k, v in defaults.items():
+    if k not in st.session_state: st.session_state[k] = v
 
 def get_client():
-    # Puxa a chave sk-... cadastrada nos Secrets do Streamlit
     api_key = st.secrets.get("OPENAI_API_KEY", "")
     return OpenAI(api_key=api_key)
+
+# INTEGRAÇÃO: Função de leitura profunda de arquivos
+def extrair_texto_cv(uploaded_file):
+    if uploaded_file is None: return ""
+    name = uploaded_file.name.lower()
+    if name.endswith(".pdf"):
+        pdf = PyPDF2.PdfReader(uploaded_file)
+        return "\n".join([p.extract_text() for p in pdf.pages])
+    elif name.endswith(".docx"):
+        doc = docx.Document(uploaded_file)
+        return "\n".join([p.text for p in doc.paragraphs])
+    else:
+        return uploaded_file.read().decode("utf-8", errors="ignore")
 
 # --- PÁGINA 1: LOGIN ---
 if not st.session_state.logged:
@@ -37,12 +40,12 @@ if not st.session_state.logged:
     u = st.text_input("Usuário")
     p = st.text_input("Senha", type="password")
     if st.button("Entrar"):
-        if u and p: # Aqui você pode definir um usuário/senha fixo se quiser
+        if u and p:
             st.session_state.logged = True
             st.rerun()
     st.stop()
 
-# --- PÁGINA 2: SISTEMA PRINCIPAL ---
+# --- PÁGINA 2: SISTEMA ---
 st.title("🎯 Treinamento EMP")
 
 # BLOCO 1: DADOS ESTRATÉGICOS
@@ -56,16 +59,15 @@ with c1:
 
     if st.button("Atualizar Análise"):
         if emp and desc and uploaded_cv:
-            with st.spinner("Gerando Análise Estratégica..."):
-                st.session_state.empresa = emp
-                st.session_state.vaga = desc
+            with st.spinner("Analisando currículo e vaga..."):
+                cv_text = extrair_texto_cv(uploaded_cv)
+                st.session_state.empresa, st.session_state.vaga = emp, desc
                 client = get_client()
-                # Chamada para o modelo correto gpt-4o-mini
                 res = client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
-                        {"role": "system", "content": "Analise pontos fortes e lacunas do candidato para esta vaga."},
-                        {"role": "user", "content": f"Empresa: {emp}\nVaga: {desc}"}
+                        {"role": "system", "content": "Analise o CV e a vaga. Forneça pontos fortes e uma estratégia de resposta."},
+                        {"role": "user", "content": f"Empresa: {emp}\nVaga: {desc}\nCV: {cv_text}"}
                     ]
                 )
                 st.session_state.analise_estrategica = res.choices[0].message.content
@@ -73,52 +75,51 @@ with c1:
                 st.rerun()
 
 with c2:
-    st.subheader("Análise Estratégica (Leitura)")
-    st.info(st.session_state.analise_estrategica if st.session_state.analise_estrategica else "Aguardando dados...")
+    st.subheader("Análise Estratégica")
+    st.info(st.session_state.analise_estrategica or "Aguardando Bloco 1...")
 
 st.divider()
 
-# BLOCO 2: SIMULAÇÃO DE ENTREVISTA
+# BLOCO 2: SIMULAÇÃO
 st.header("🔷 BLOCO 2 — SIMULAÇÃO DE ENTREVISTA")
 
-if not st.session_state.analise_gerada:
-    st.warning("⚠️ Você precisa gerar a análise no Bloco 1 primeiro.")
-else:
-    col_btn1, col_btn2 = st.columns([1, 5])
-    with col_btn1:
-        if st.button("▶️ Iniciar"):
-            st.session_state.modo_entrevista = True
-    with col_btn2:
+if st.session_state.analise_gerada:
+    col1, col2 = st.columns([1, 5])
+    with col1:
+        if st.button("▶️ Iniciar"): st.session_state.modo_entrevista = True
+    with col2:
         if st.button("🛑 Encerrar"):
-            st.session_state.clear() # Limpa tudo conforme seu fluxo
+            st.session_state.clear()
             st.rerun()
 
     if st.session_state.modo_entrevista:
-        st.write("🎤 Microfone ativo. Fale sua pergunta:")
+        st.write("🎤 Fale sua pergunta:")
         audio = audio_recorder(text="", neutral_color="#2ecc71")
-        
-        if audio and len(audio) != st.session_state.last_audio_len:
-            st.session_state.last_audio_len = len(audio)
-            client = get_client()
-            with st.spinner("Processando..."):
-                # Transcrição via Whisper-1
-                tr = client.audio.transcriptions.create(model="whisper-1", file=("audio.wav", audio))
-                st.session_state.transcricao = tr.text
-                
-                # Resposta baseada na estratégia
-                resp = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {"role": "system", "content": "Gere uma resposta ideal de até 8 linhas (ou 10 para cases)."},
-                        {"role": "user", "content": f"Pergunta: {tr.text}\nEstratégia: {st.session_state.analise_estrategica}"}
-                    ]
-                )
-                st.session_state.resposta_ideal = resp.choices[0].message.content
-                st.rerun()
 
-        st.text_input("Transcrição da Pergunta", value=st.session_state.transcricao, disabled=True)
-        nova_resp = st.text_area("Resposta Estratégica (Editável)", value=st.session_state.resposta_ideal, height=200)
-        
-        if st.button("🔄 Atualizar Resposta"):
+        if audio:
+            audio_hash = hashlib.sha1(audio).hexdigest()
+            if audio_hash != st.session_state.last_audio_hash:
+                st.session_state.last_audio_hash = audio_hash
+                client = get_client()
+                with st.spinner("Processando áudio..."):
+                    audio_file = io.BytesIO(audio)
+                    audio_file.name = "audio.wav"
+                    tr = client.audio.transcriptions.create(model="whisper-1", file=audio_file)
+                    st.session_state.transcricao = tr.text
+                    
+                    # INTEGRAÇÃO: Resposta amarrada à estratégia do Bloco 1
+                    resp = client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[
+                            {"role": "system", "content": f"Use esta estratégia: {st.session_state.analise_estrategica}"},
+                            {"role": "user", "content": f"Pergunta: {tr.text}"}
+                        ]
+                    )
+                    st.session_state.resposta_ideal = resp.choices[0].message.content
+                    st.rerun()
+
+        st.text_input("Pergunta detectada", value=st.session_state.transcricao, disabled=True)
+        nova_resp = st.text_area("Sugestão de Resposta", value=st.session_state.resposta_ideal, height=200)
+        if st.button("🔄 Refinar Resposta"):
             st.session_state.resposta_ideal = nova_resp
-            st.success("Resposta atualizada!")
+            st.success("Refinado!")
