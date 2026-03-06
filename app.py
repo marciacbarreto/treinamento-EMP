@@ -6,7 +6,7 @@ from audio_recorder_streamlit import audio_recorder
 import PyPDF2
 import docx
 
-# --- 1. CONFIGURAÇÃO E REGRAS ---
+# --- 1. CONFIGURAÇÃO E PADRÕES ---
 st.set_page_config(page_title="Treinamento EMP", layout="wide", initial_sidebar_state="collapsed")
 
 RODAPE_FERRAMENTAS = (
@@ -24,27 +24,30 @@ PALAVRAS_CHAVE = [
     "capacidade de conectar áreas e garantir alinhamento estratégico"
 ]
 
-# --- 2. MEMÓRIA DO SISTEMA ---
+# --- 2. GESTÃO DE ESTADO (SESSION STATE) ---
 if "logged" not in st.session_state: st.session_state.logged = False
 if "analise_gerada" not in st.session_state: st.session_state.analise_gerada = False
 if "modo_entrevista" not in st.session_state: st.session_state.modo_entrevista = False
 if "analise_estrategica" not in st.session_state: st.session_state.analise_estrategica = ""
 if "resposta_ideal" not in st.session_state: st.session_state.resposta_ideal = ""
+if "cv_text" not in st.session_state: st.session_state.cv_text = ""
 if "last_audio_hash" not in st.session_state: st.session_state.last_audio_hash = ""
 
 def get_client():
     return OpenAI(api_key=st.secrets.get("OPENAI_API_KEY", ""))
 
-def extrair_texto_cv(uploaded_file):
-    if not uploaded_file: return ""
-    name = uploaded_file.name.lower()
-    if name.endswith(".pdf"):
-        pdf = PyPDF2.PdfReader(uploaded_file)
-        return "\n".join([p.extract_text() for p in pdf.pages if p.extract_text()])
-    elif name.endswith(".docx"):
-        doc = docx.Document(uploaded_file)
-        return "\n".join([p.text for p in doc.paragraphs])
-    return uploaded_file.read().decode("utf-8", errors="ignore")
+def extrair_texto(file):
+    if not file: return ""
+    try:
+        fname = file.name.lower()
+        if fname.endswith(".pdf"):
+            pdf = PyPDF2.PdfReader(file)
+            return "\n".join([p.extract_text() for p in pdf.pages if p.extract_text()])
+        elif fname.endswith(".docx"):
+            doc = docx.Document(file)
+            return "\n".join([p.text for p in doc.paragraphs])
+        return file.read().decode("utf-8", errors="ignore")
+    except: return "Erro na leitura do arquivo."
 
 # --- 3. LOGIN ---
 if not st.session_state.logged:
@@ -55,81 +58,89 @@ if not st.session_state.logged:
         st.rerun()
     st.stop()
 
-# --- 4. SISTEMA ---
+# --- 4. INTERFACE (ORDEM DO DESENHO) ---
 st.title("🎯 Treinamento EMP")
 
-# BLOCO 1: DADOS ESTRATÉGICOS
-st.header("🔷 BLOCO 1 — DADOS ESTRATÉGICOS")
-c1, c2 = st.columns(2)
+# EMPRESA
+empresa = st.text_input("Empresa", key="emp_persist", placeholder="Nome da empresa...")
 
-with c1:
-    emp = st.text_input("Empresa", key="emp_input")
-    desc = st.text_area("Descrição da Vaga", height=150, key="vaga_input")
+# LINHA: VAGA | CURRÍCULO
+col_vaga, col_cv = st.columns(2)
+with col_vaga:
+    vaga = st.text_area("Descrição da Vaga", height=150, key="vaga_persist")
+with col_cv:
     uploaded_cv = st.file_uploader("Upload do Currículo", type=["pdf", "docx", "txt"])
+    if st.session_state.analise_gerada:
+        with st.expander("📄 Ver Análise Estratégica Atual", expanded=True):
+            st.write(st.session_state.analise_estrategica)
 
-    if st.button("Atualizar Análise"):
-        if emp and desc and uploaded_cv:
-            with st.spinner("Cruzando Vaga, CV e Empresa..."):
-                cv_text = extrair_texto_cv(uploaded_cv)
+# FERRAMENTAS
+ferramentas = st.text_area("Ferramentas que a empresa trabalha (explicação)", height=100, key="ferr_persist")
+
+# BOTÕES DE CONTROLE
+st.write("")
+c_ini, c_atu, c_enc = st.columns([1, 1, 1])
+
+with c_atu:
+    if st.button("🔄 Atualizar", use_container_width=True):
+        if empresa and vaga and uploaded_cv:
+            with st.spinner("Cruzando dados..."):
+                cv_txt = extrair_texto(uploaded_cv)
+                st.session_state.cv_text = cv_txt
                 client = get_client()
-                prompt_b1 = f"Analise o CV para a vaga na {emp}. Foque em: {', '.join(PALAVRAS_CHAVE)}."
-                res = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[{"role": "system", "content": prompt_b1},
-                              {"role": "user", "content": f"Vaga: {desc}\nCV: {cv_text}"}]
-                )
-                st.session_state.analise_estrategica = res.choices[0].message.content
-                st.session_state.cv_text = cv_text
-                st.session_state.empresa = emp
-                st.session_state.analise_gerada = True
-                st.rerun()
+                prompt_b1 = f"Analise CV para {empresa}. Use obrigatoriamente: {', '.join(PALAVRAS_CHAVE)}."
+                try:
+                    res = client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[{"role": "system", "content": prompt_b1},
+                                  {"role": "user", "content": f"VAGA: {vaga}\nCV: {cv_txt}"}]
+                    )
+                    st.session_state.analise_estrategica = res.choices[0].message.content
+                    st.session_state.analise_gerada = True
+                    st.rerun()
+                except: st.error("Erro na API. Verifique os Secrets.")
 
-with c2:
-    st.subheader("Análise Estratégica")
-    st.info(st.session_state.analise_estrategica or "Aguardando atualização...")
+with c_ini:
+    if st.button("▶️ Iniciar", use_container_width=True):
+        st.session_state.modo_entrevista = True
+
+with c_enc:
+    if st.button("🛑 Encerrar", use_container_width=True):
+        st.session_state.modo_entrevista = False
+        st.session_state.resposta_ideal = ""
+        st.rerun()
 
 st.divider()
 
-# BLOCO 2: SIMULAÇÃO COM RESPOSTA AUTOMÁTICA
-st.header("🔷 BLOCO 2 — SIMULAÇÃO DE ENTREVISTA")
-
-if st.session_state.analise_gerada:
-    if st.button("▶️ Iniciar Simulação"): st.session_state.modo_entrevista = True
+# BLOCO 2 — SIMULAÇÃO
+if st.session_state.modo_entrevista and st.session_state.analise_gerada:
+    st.write("🎤 **Microfone / áudio para escutar pergunta**")
+    audio = audio_recorder(text="Fale a pergunta agora", neutral_color="#2ecc71")
     
-    if st.session_state.modo_entrevista:
-        st.write("🎤 **Fale a pergunta agora:**")
-        audio = audio_recorder(text="Escutar pergunta da entrevista", neutral_color="#2ecc71")
-        
-        if audio:
-            a_hash = hashlib.sha1(audio).hexdigest()
-            if a_hash != st.session_state.last_audio_hash:
-                st.session_state.last_audio_hash = a_hash
-                client = get_client()
-                with st.spinner("Gerando Resposta Estratégica Automática..."):
-                    # Transcrição silenciosa (apenas para processamento)
+    if audio:
+        a_hash = hashlib.sha1(audio).hexdigest()
+        if a_hash != st.session_state.last_audio_hash:
+            st.session_state.last_audio_hash = a_hash
+            client = get_client()
+            with st.spinner("Gerando resposta estratégica..."):
+                try:
                     tr = client.audio.transcriptions.create(model="whisper-1", file=("a.wav", io.BytesIO(audio)))
-                    
-                    # Resposta estratégica com cruzamento obrigatório
-                    prompt_b2 = f"""
-                    Você é um candidato sendo entrevistado na empresa {st.session_state.empresa}.
-                    Estratégia base: {st.session_state.analise_estrategica}
-                    Evidências do CV: {st.session_state.cv_text[:2000]}
-                    
-                    REGRAS:
-                    - Responda DIRETAMENTE à pergunta ouvida.
-                    - Tom convincente, objetivo e de conversa.
-                    - Inclua OBRIGATORIAMENTE: {', '.join(PALAVRAS_CHAVE)}.
-                    - Termine com este rodapé exatamente: {RODAPE_FERRAMENTAS}
+                    prompt_final = f"""
+                    Empresa: {empresa}. Estratégia: {st.session_state.analise_estrategica}.
+                    CV: {st.session_state.cv_text[:2000]}.
+                    Regras: Responda diretamente à pergunta. Use tom de conversa. 
+                    Inclua: {', '.join(PALAVRAS_CHAVE)}.
+                    Termine com: {RODAPE_FERRAMENTAS}
                     """
                     resp = client.chat.completions.create(
                         model="gpt-4o-mini",
-                        messages=[{"role": "system", "content": prompt_b2},
-                                  {"role": "user", "content": f"Pergunta ouvida: {tr.text}"}]
+                        messages=[{"role": "system", "content": prompt_final},
+                                  {"role": "user", "content": f"Pergunta: {tr.text}"}]
                     )
                     st.session_state.resposta_ideal = resp.choices[0].message.content
                     st.rerun()
+                except: st.error("Erro no processamento do áudio.")
 
-        # SAÍDA DIRETA: Mostra apenas a Resposta Sugerida
-        if st.session_state.resposta_ideal:
-            st.subheader("Sugestão de Resposta Estratégica")
-            st.write(st.session_state.resposta_ideal)
+    if st.session_state.resposta_ideal:
+        st.subheader("Resposta de acordo com: vaga + empresa + currículo + pergunta")
+        st.success(st.session_state.resposta_ideal)
