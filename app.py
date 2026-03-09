@@ -6,11 +6,15 @@ from audio_recorder_streamlit import audio_recorder
 import PyPDF2
 import docx
 
+# ------------------------------
+# CONFIGURAÇÃO DA PÁGINA
+# ------------------------------
+
 st.set_page_config(page_title="Treinamento EMP", layout="wide")
 
-# -------------------------
+# ------------------------------
 # ESTADO DA SESSÃO
-# -------------------------
+# ------------------------------
 
 defaults = {
     "transcricao": "",
@@ -23,19 +27,17 @@ for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-
-# -------------------------
+# ------------------------------
 # CLIENTE OPENAI
-# -------------------------
+# ------------------------------
 
 def get_client():
     api_key = st.secrets.get("OPENAI_API_KEY", "")
     return OpenAI(api_key=api_key)
 
-
-# -------------------------
-# EXTRAIR TEXTO DO CV
-# -------------------------
+# ------------------------------
+# EXTRAIR TEXTO DO CURRÍCULO
+# ------------------------------
 
 def extrair_texto_cv(uploaded_file):
 
@@ -55,49 +57,96 @@ def extrair_texto_cv(uploaded_file):
     else:
         return uploaded_file.read().decode("utf-8", errors="ignore")
 
-
-# -------------------------
-# INTERFACE
-# -------------------------
+# ------------------------------
+# TÍTULO
+# ------------------------------
 
 st.title("Treinamento EMP")
 
+# ------------------------------
 # EMPRESA
+# ------------------------------
+
 empresa = st.text_input("Empresa")
 
-# VAGA + CURRÍCULO
+# ------------------------------
+# DESCRIÇÃO DA VAGA + CURRÍCULO
+# ------------------------------
+
 col1, col2 = st.columns(2)
 
 with col1:
-    vaga = st.text_area("Descrição da vaga", height=200)
+
+    vaga = st.text_area(
+        "Descrição da vaga",
+        height=200
+    )
 
 with col2:
-    uploaded_cv = st.file_uploader("Currículo", type=["pdf", "docx", "txt"])
+
+    uploaded_cv = st.file_uploader(
+        "Currículo",
+        type=["pdf","docx","txt"]
+    )
 
     if uploaded_cv:
         st.session_state.cv_text = extrair_texto_cv(uploaded_cv)
         st.success("Currículo carregado")
 
-# -------------------------
-# FERRAMENTAS
-# -------------------------
+# ------------------------------
+# FERRAMENTAS DA EMPRESA
+# (ALTERAÇÃO FEITA AQUI)
+# ------------------------------
 
 st.subheader("Ferramentas que a empresa trabalha (Explicação)")
 
-st.info("""
-Jira (gestão de backlog e tarefas ágeis) /
-Confluence (documentação e governança de processos) /
-Miro (mapas colaborativos e desenho de jornadas) /
-Google Analytics (análise de comportamento no e-commerce) /
-Power BI (monitoramento de indicadores e dashboards) /
-Adobe Experience Manager (gestão de conteúdo digital) /
-Slack (comunicação entre áreas) /
-ChatGPT (IA para análise e otimização de processos)
-""")
+if empresa and vaga:
 
-# -------------------------
+    with st.spinner("Identificando ferramentas utilizadas pela empresa..."):
+
+        client = get_client()
+
+        resposta_tools = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": """
+Identifique as principais ferramentas utilizadas pela empresa
+com base na descrição da vaga.
+
+Liste até 6 ferramentas utilizadas nessa área.
+
+Formato obrigatório:
+Ferramenta (explicação curta) / Ferramenta (explicação curta)
+
+As ferramentas devem estar relacionadas a:
+operações, CRM, análise de dados, automação e gestão de processos.
+"""
+                },
+                {
+                    "role": "user",
+                    "content": f"""
+Empresa: {empresa}
+
+Descrição da vaga:
+{vaga}
+
+Currículo:
+{st.session_state.cv_text}
+"""
+                }
+            ],
+            max_tokens=120
+        )
+
+        ferramentas = resposta_tools.choices[0].message.content
+
+        st.info(ferramentas)
+
+# ------------------------------
 # BOTÕES
-# -------------------------
+# ------------------------------
 
 colb1, colb2, colb3 = st.columns(3)
 
@@ -112,33 +161,31 @@ with colb3:
 
 st.divider()
 
-# -------------------------
+# ------------------------------
 # PERGUNTA DA ENTREVISTA
-# -------------------------
+# ------------------------------
 
 st.subheader("Pergunta da entrevista")
 
-# campo para digitar pergunta
 pergunta_digitada = st.text_input(
     "Digite a pergunta ou use o microfone"
 )
 
-# microfone
 audio = audio_recorder(text="Click to record")
 
 client = get_client()
 
-# -------------------------
-# SE PERGUNTA FOR DIGITADA
-# -------------------------
+# ------------------------------
+# PERGUNTA DIGITADA
+# ------------------------------
 
 if pergunta_digitada:
 
     st.session_state.transcricao = pergunta_digitada
 
-# -------------------------
-# SE PERGUNTA VIER DO ÁUDIO
-# -------------------------
+# ------------------------------
+# PERGUNTA POR ÁUDIO
+# ------------------------------
 
 elif audio:
 
@@ -160,56 +207,9 @@ elif audio:
 
             st.session_state.transcricao = transcricao.text
 
-# -------------------------
-# GERAR RESPOSTA
-# -------------------------
-
-if st.session_state.transcricao:
-
-    with st.spinner("Gerando resposta estratégica..."):
-
-        resposta = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": f"""
-Responda em tom de conversa.
-
-A resposta deve conter:
-
-• KPI relacionado à vaga
-• ferramentas utilizadas
-• como a análise é feita
-• qual resultado isso gera
-
-Usar informações da vaga, empresa e currículo.
-"""
-                },
-                {
-                    "role": "user",
-                    "content": f"""
-Empresa: {empresa}
-
-Vaga:
-{vaga}
-
-Currículo:
-{st.session_state.cv_text}
-
-Pergunta:
-{st.session_state.transcricao}
-"""
-                }
-            ]
-        )
-
-        st.session_state.resposta = resposta.choices[0].message.content
-
-
-# -------------------------
+# ------------------------------
 # TRANSCRIÇÃO
-# -------------------------
+# ------------------------------
 
 st.subheader("Transcrição da pergunta")
 
@@ -219,14 +219,60 @@ st.text_area(
     height=100
 )
 
-# -------------------------
+# ------------------------------
+# GERAR RESPOSTA
+# ------------------------------
+
+if st.session_state.transcricao:
+
+    with st.spinner("Gerando resposta estratégica..."):
+
+        resposta = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": """
+Responder em tom de conversa.
+
+A resposta deve incluir:
+- KPIs
+- ferramentas usadas
+- como analisa dados
+- resultado gerado
+
+Responder em até 4 frases curtas.
+"""
+                },
+                {
+                    "role": "user",
+                    "content": f"""
+Empresa: {empresa}
+
+Descrição da vaga:
+{vaga}
+
+Currículo:
+{st.session_state.cv_text}
+
+Pergunta:
+{st.session_state.transcricao}
+"""
+                }
+            ],
+            max_tokens=150
+        )
+
+        st.session_state.resposta = resposta.choices[0].message.content
+
+# ------------------------------
 # RESPOSTA
-# -------------------------
+# ------------------------------
 
 st.subheader("Resposta estratégica")
 
 st.text_area(
     "Resposta baseada na vaga, currículo e pergunta",
     value=st.session_state.resposta,
-    height=250
+    height=180
 )
