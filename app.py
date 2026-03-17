@@ -95,7 +95,6 @@ with col2:
 
 # ------------------------------
 # FERRAMENTAS DA EMPRESA
-# (ALTERAÇÃO FEITA AQUI)
 # ------------------------------
 
 st.subheader("Ferramentas que a empresa trabalha (Explicação)")
@@ -107,7 +106,7 @@ if empresa and vaga:
         client = get_client()
 
         resposta_tools = client.chat.completions.create(
-            model="gpt-4.1-mini",
+            model="gpt-4o-mini",
             messages=[
                 {
                     "role": "system",
@@ -228,20 +227,21 @@ if st.session_state.transcricao:
     with st.spinner("Gerando resposta estratégica..."):
 
         resposta = client.chat.completions.create(
-            model="gpt-4.1-mini",
+            model="gpt-4o-mini",
             messages=[
                 {
                     "role": "system",
                     "content": """
-Responder em tom de conversa.
+Responda como um humano em entrevista, de forma natural e direta.
 
-A resposta deve incluir:
-- KPIs
-- ferramentas usadas
-- como analisa dados
-- resultado gerado
-
-Responder em até 4 frases curtas.
+Regras:
+- Seja rápido e objetivo
+- Não invente informação
+- Não repita conteúdo
+- Use tom coloquial, como conversa
+- Só aprofunde se a pergunta exigir
+- Se a pergunta for simples, responda em 1 ou 2 frases
+- Evite linguagem robótica ou técnica excessiva
 """
                 },
                 {
@@ -260,7 +260,7 @@ Pergunta:
 """
                 }
             ],
-            max_tokens=150
+            max_tokens=120
         )
 
         st.session_state.resposta = resposta.choices[0].message.content
