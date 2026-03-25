@@ -1,26 +1,29 @@
 import streamlit as st
 import io
 import hashlib
+import time
 from openai import OpenAI
 from audio_recorder_streamlit import audio_recorder
 import PyPDF2
 import docx
 
 # ------------------------------
-# CONFIGURAÇÃO DA PÁGINA
+# CONFIGURAÇÃO
 # ------------------------------
-
-st.set_page_config(page_title="Treinamento EMP", layout="wide")
+st.set_page_config(page_title="Treinamento EMP PRO", layout="wide")
 
 # ------------------------------
-# ESTADO DA SESSÃO
+# ESTADO
 # ------------------------------
-
 defaults = {
     "transcricao": "",
     "resposta": "",
     "cv_text": "",
-    "last_audio_hash": ""
+    "last_audio_hash": "",
+    "buffer": "",
+    "last_update": time.time(),
+    "history": [],
+    "resposta_parcial": ""
 }
 
 for k, v in defaults.items():
@@ -28,19 +31,18 @@ for k, v in defaults.items():
         st.session_state[k] = v
 
 # ------------------------------
-# CLIENTE OPENAI
+# OPENAI
 # ------------------------------
-
 def get_client():
     api_key = st.secrets.get("OPENAI_API_KEY", "")
     return OpenAI(api_key=api_key)
 
-# ------------------------------
-# EXTRAIR TEXTO DO CURRÍCULO
-# ------------------------------
+client = get_client()
 
+# ------------------------------
+# CV
+# ------------------------------
 def extrair_texto_cv(uploaded_file):
-
     if uploaded_file is None:
         return ""
 
@@ -58,221 +60,151 @@ def extrair_texto_cv(uploaded_file):
         return uploaded_file.read().decode("utf-8", errors="ignore")
 
 # ------------------------------
-# TÍTULO
+# UI
 # ------------------------------
-
-st.title("Treinamento EMP")
-
-# ------------------------------
-# EMPRESA
-# ------------------------------
+st.title("Treinamento EMP PRO (Tempo Real)")
 
 empresa = st.text_input("Empresa")
+vaga = st.text_area("Descrição da vaga")
+
+uploaded_cv = st.file_uploader("Currículo", type=["pdf","docx","txt"])
+
+if uploaded_cv:
+    st.session_state.cv_text = extrair_texto_cv(uploaded_cv)
 
 # ------------------------------
-# DESCRIÇÃO DA VAGA + CURRÍCULO
+# PREDIÇÃO
 # ------------------------------
+def prever_intencao(texto):
+    texto = texto.lower()
 
-col1, col2 = st.columns(2)
+    if "tell me about" in texto:
+        return "behavioral"
+    if "how" in texto:
+        return "situational"
+    if "why" in texto:
+        return "reasoning"
 
-with col1:
-
-    vaga = st.text_area(
-        "Descrição da vaga",
-        height=200
-    )
-
-with col2:
-
-    uploaded_cv = st.file_uploader(
-        "Currículo",
-        type=["pdf","docx","txt"]
-    )
-
-    if uploaded_cv:
-        st.session_state.cv_text = extrair_texto_cv(uploaded_cv)
-        st.success("Currículo carregado")
+    return "general"
 
 # ------------------------------
-# FERRAMENTAS DA EMPRESA
+# PROMPT DINÂMICO
 # ------------------------------
+def build_prompt(pergunta):
+    return f"""
+Você está em uma entrevista.
 
-st.subheader("Ferramentas que a empresa trabalha (Explicação)")
+Pergunta:
+{pergunta}
 
-if empresa and vaga:
+Empresa:
+{empresa}
 
-    with st.spinner("Identificando ferramentas utilizadas pela empresa..."):
-
-        client = get_client()
-
-        resposta_tools = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": """
-Identifique as principais ferramentas utilizadas pela empresa
-com base na descrição da vaga.
-
-Liste até 6 ferramentas utilizadas nessa área.
-
-Formato obrigatório:
-Ferramenta (explicação curta) / Ferramenta (explicação curta)
-
-As ferramentas devem estar relacionadas a:
-operações, CRM, análise de dados, automação e gestão de processos.
-"""
-                },
-                {
-                    "role": "user",
-                    "content": f"""
-Empresa: {empresa}
-
-Descrição da vaga:
+Vaga:
 {vaga}
 
 Currículo:
 {st.session_state.cv_text}
+
+Responda:
+- Natural
+- Curto
+- Como humano
+- Sem parecer IA
 """
-                }
-            ],
-            max_tokens=120
-        )
-
-        ferramentas = resposta_tools.choices[0].message.content
-
-        st.info(ferramentas)
 
 # ------------------------------
-# BOTÕES
+# RESPOSTA
 # ------------------------------
+def gerar_resposta(pergunta):
+    prompt = build_prompt(pergunta)
 
-colb1, colb2, colb3 = st.columns(3)
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=120
+    )
 
-with colb1:
-    iniciar = st.button("Iniciar")
-
-with colb2:
-    atualizar = st.button("Atualizar")
-
-with colb3:
-    encerrar = st.button("Encerrar")
-
-st.divider()
+    return response.choices[0].message.content
 
 # ------------------------------
-# PERGUNTA DA ENTREVISTA
+# UI DE RESPOSTA DINÂMICA
 # ------------------------------
-
-st.subheader("Pergunta da entrevista")
-
-pergunta_digitada = st.text_input(
-    "Digite a pergunta ou use o microfone"
-)
-
-audio = audio_recorder(text="Click to record")
-
-client = get_client()
+placeholder_resposta = st.empty()
 
 # ------------------------------
-# PERGUNTA DIGITADA
+# ÁUDIO
 # ------------------------------
+audio = audio_recorder(text="Gravar pergunta")
 
-if pergunta_digitada:
-
-    st.session_state.transcricao = pergunta_digitada
-
-# ------------------------------
-# PERGUNTA POR ÁUDIO
-# ------------------------------
-
-elif audio:
-
+if audio:
     audio_hash = hashlib.sha1(audio).hexdigest()
 
     if audio_hash != st.session_state.last_audio_hash:
 
         st.session_state.last_audio_hash = audio_hash
 
-        with st.spinner("Transcrevendo pergunta..."):
+        audio_file = io.BytesIO(audio)
+        audio_file.name = "audio.wav"
 
-            audio_file = io.BytesIO(audio)
-            audio_file.name = "audio.wav"
-
-            transcricao = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=audio_file
-            )
-
-            st.session_state.transcricao = transcricao.text
-
-# ------------------------------
-# TRANSCRIÇÃO
-# ------------------------------
-
-st.subheader("Transcrição da pergunta")
-
-st.text_area(
-    "Pergunta detectada",
-    value=st.session_state.transcricao,
-    height=100
-)
-
-# ------------------------------
-# GERAR RESPOSTA
-# ------------------------------
-
-if st.session_state.transcricao:
-
-    with st.spinner("Gerando resposta estratégica..."):
-
-        resposta = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": """
-Responda como um humano em entrevista, de forma natural e direta.
-
-Regras:
-- Seja rápido e objetivo
-- Não invente informação
-- Não repita conteúdo
-- Use tom coloquial, como conversa
-- Só aprofunde se a pergunta exigir
-- Se a pergunta for simples, responda em 1 ou 2 frases
-- Evite linguagem robótica ou técnica excessiva
-"""
-                },
-                {
-                    "role": "user",
-                    "content": f"""
-Empresa: {empresa}
-
-Descrição da vaga:
-{vaga}
-
-Currículo:
-{st.session_state.cv_text}
-
-Pergunta:
-{st.session_state.transcricao}
-"""
-                }
-            ],
-            max_tokens=120
+        transcricao = client.audio.transcriptions.create(
+            model="whisper-1",
+            file=audio_file
         )
 
-        st.session_state.resposta = resposta.choices[0].message.content
+        texto = transcricao.text
+
+        # ------------------------------
+        # BUFFER DE FRAGMENTOS
+        # ------------------------------
+        st.session_state.buffer += " " + texto
+        st.session_state.last_update = time.time()
+
+        buffer_texto = st.session_state.buffer.strip()
+
+        st.subheader("🧠 Pergunta em construção")
+        st.write(buffer_texto)
+
+        # ------------------------------
+        # RESPOSTA ANTECIPADA
+        # ------------------------------
+        if len(buffer_texto.split()) > 4:
+
+            resposta_parcial = gerar_resposta(buffer_texto)
+
+            st.session_state.resposta_parcial = resposta_parcial
+
+            placeholder_resposta.markdown(
+                f"💬 **Resposta em tempo real:**\n\n{resposta_parcial}"
+            )
 
 # ------------------------------
-# RESPOSTA
+# FINALIZAÇÃO (SIMULA VAD)
 # ------------------------------
+tempo_parado = time.time() - st.session_state.last_update
 
-st.subheader("Resposta estratégica")
+if st.session_state.buffer and tempo_parado > 2:
 
-st.text_area(
-    "Resposta baseada na vaga, currículo e pergunta",
-    value=st.session_state.resposta,
-    height=180
-)
+    pergunta_final = st.session_state.buffer.strip()
+
+    st.subheader("✅ Pergunta final detectada")
+    st.write(pergunta_final)
+
+    resposta_final = gerar_resposta(pergunta_final)
+
+    st.session_state.resposta = resposta_final
+
+    placeholder_resposta.markdown(
+        f"🎯 **Resposta final:**\n\n{resposta_final}"
+    )
+
+    # ------------------------------
+    # HISTÓRICO
+    # ------------------------------
+    st.session_state.history.append({
+        "pergunta": pergunta_final,
+        "resposta": resposta_final
+    })
+
+    # Reset
+    st.session_state.buffer = ""
