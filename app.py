@@ -13,19 +13,14 @@ import docx
 st.set_page_config(page_title="Treinamento EMP", layout="wide")
 
 # ------------------------------
-# CLIENTE OPENAI
-# ------------------------------
-
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-
-# ------------------------------
-# ESTADO DA SESSÃO (MANTIDO)
+# ESTADO DA SESSÃO
 # ------------------------------
 
 defaults = {
     "transcricao": "",
     "resposta": "",
-    "ultimo_prompt": ""
+    "cv_text": "",
+    "last_audio_hash": ""
 }
 
 for k, v in defaults.items():
@@ -33,157 +28,251 @@ for k, v in defaults.items():
         st.session_state[k] = v
 
 # ------------------------------
-# FUNÇÕES DE LEITURA (ADICIONADO)
+# CLIENTE OPENAI
 # ------------------------------
 
-def ler_pdf(file):
-    reader = PyPDF2.PdfReader(file)
-    texto = ""
-    for page in reader.pages:
-        texto += page.extract_text() or ""
-    return texto
-
-def ler_docx(file):
-    doc = docx.Document(file)
-    return "\n".join([p.text for p in doc.paragraphs])
+def get_client():
+    api_key = st.secrets.get("OPENAI_API_KEY", "")
+    return OpenAI(api_key=api_key)
 
 # ------------------------------
-# PROMPT BASE (MANTIDO)
+# EXTRAIR TEXTO DO CURRÍCULO
 # ------------------------------
 
-PROMPT_BASE = """
-Você é um assistente de preparação para entrevistas.
+def extrair_texto_cv(uploaded_file):
 
-Siga TODAS as regras abaixo rigorosamente:
+    if uploaded_file is None:
+        return ""
 
-- Sempre cruze as informações da vaga com o currículo antes de responder.
-- Identifique as ferramentas mencionadas na vaga (Excel, Power BI, SAP, SQL, CRM, Lean, etc.).
-- Utilize apenas ferramentas do currículo ou compatíveis (sem inventar).
-- Se tiver experiência → afirmar.
-- Se não tiver → aproximar com lógica (sem mentir).
-- Explicar para que serve a ferramenta no contexto.
-- Conectar com experiência real.
-- Mostrar impacto (eficiência, controle, decisão).
-- Linguagem natural, sem robô.
+    name = uploaded_file.name.lower()
 
----
+    if name.endswith(".pdf"):
+        pdf = PyPDF2.PdfReader(uploaded_file)
+        return "\n".join([p.extract_text() for p in pdf.pages if p.extract_text()])
 
-- Incluir ferramentas da vaga com explicação prática.
-- Não só citar — explicar uso.
+    elif name.endswith(".docx"):
+        doc = docx.Document(uploaded_file)
+        return "\n".join([p.text for p in doc.paragraphs])
 
----
-
-- Respostas de 5 a 8 linhas.
-- Tom falado, natural.
-- Estrutura interna:
-  contexto → vaga → ferramentas → impacto
-
-- Adaptar tipo:
-  comportamental / técnica / carreira
-
-- Não usar “acho”, “talvez”.
-- Não repetir padrão.
-- Conectar com a vaga.
-- Nunca inventar.
-- Fechar com impacto.
-"""
+    else:
+        return uploaded_file.read().decode("utf-8", errors="ignore")
 
 # ------------------------------
-# INTERFACE (MANTIDA)
+# TÍTULO
 # ------------------------------
 
-st.title("🎯 Treinamento de Entrevista (Estilo Parakeet)")
+st.title("Treinamento EMP")
+
+# ------------------------------
+# EMPRESA
+# ------------------------------
+
+empresa = st.text_input("Empresa")
+
+# ------------------------------
+# DESCRIÇÃO DA VAGA + CURRÍCULO
+# ------------------------------
 
 col1, col2 = st.columns(2)
 
 with col1:
-    curriculo = st.text_area("📄 Cole o currículo", height=250)
 
-    # ✅ ADIÇÃO (UPLOAD SEM REMOVER NADA)
-    arquivo = st.file_uploader("Ou envie o currículo (PDF/DOCX)", type=["pdf", "docx"])
+    vaga = st.text_area(
+        "Descrição da vaga",
+        height=200
+    )
 
 with col2:
-    vaga = st.text_area("📋 Cole a descrição da vaga", height=250)
 
-pergunta = st.text_input("❓ Pergunta da entrevista")
+    uploaded_cv = st.file_uploader(
+        "Currículo",
+        type=["pdf","docx","txt"]
+    )
 
-# ------------------------------
-# PROCESSAMENTO CURRÍCULO (CORRIGIDO)
-# ------------------------------
-
-curriculo_final = curriculo.strip() if curriculo else ""
-
-if arquivo:
-    texto_arquivo = ""
-
-    if arquivo.type == "application/pdf":
-        texto_arquivo = ler_pdf(arquivo)
-    elif "word" in arquivo.type:
-        texto_arquivo = ler_docx(arquivo)
-
-    if texto_arquivo.strip():
-        curriculo_final = texto_arquivo
+    if uploaded_cv:
+        st.session_state.cv_text = extrair_texto_cv(uploaded_cv)
+        st.success("Currículo carregado")
 
 # ------------------------------
-# CLASSIFICAÇÃO (MANTIDA)
+# FERRAMENTAS DA EMPRESA
 # ------------------------------
 
-def classificar_pergunta(texto):
-    texto = texto.lower()
+st.subheader("Ferramentas que a empresa trabalha (Explicação)")
 
-    if any(p in texto for p in ["desafio", "erro", "conflito"]):
-        return "comportamental"
-    elif any(p in texto for p in ["ferramenta", "processo", "dados"]):
-        return "tecnica"
-    elif any(p in texto for p in ["por que", "carreira", "trajetoria"]):
-        return "carreira"
-    else:
-        return "geral"
+if empresa and vaga:
 
-# ------------------------------
-# BOTÃO (MANTIDO + DEBUG)
-# ------------------------------
+    with st.spinner("Identificando ferramentas utilizadas pela empresa..."):
 
-if st.button("Gerar Resposta"):
+        client = get_client()
 
-    if not curriculo_final.strip() or not vaga.strip() or not pergunta.strip():
-        st.warning("Preencha currículo (ou envie arquivo), vaga e pergunta.")
-    else:
-        tipo = classificar_pergunta(pergunta)
+        resposta_tools = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": """
+Identifique as principais ferramentas utilizadas pela empresa
+com base na descrição da vaga.
 
-        prompt_final = f"""
-{PROMPT_BASE}
+Liste até 6 ferramentas utilizadas nessa área.
 
-CURRÍCULO:
-{curriculo_final}
+Formato obrigatório:
+Ferramenta (explicação curta) / Ferramenta (explicação curta)
 
-VAGA:
+As ferramentas devem estar relacionadas a:
+operações, CRM, análise de dados, automação e gestão de processos.
+"""
+                },
+                {
+                    "role": "user",
+                    "content": f"""
+Empresa: {empresa}
+
+Descrição da vaga:
 {vaga}
 
-TIPO:
-{tipo}
-
-PERGUNTA:
-{pergunta}
-
-Responda seguindo todas as regras.
+Currículo:
+{st.session_state.cv_text}
 """
-
-        # ✅ DEBUG VISUAL
-        st.subheader("🧠 DEBUG - PROMPT ENVIADO")
-        st.text_area("Prompt completo", prompt_final, height=250)
-
-        # ✅ DEBUG LOG
-        print(prompt_final)
-
-        # salvar histórico
-        st.session_state["ultimo_prompt"] = prompt_final
-
-        response = client.chat.completions.create(
-            model="gpt-5.3",
-            messages=[{"role": "user", "content": prompt_final}],
-            temperature=0.4
+                }
+            ],
+            max_tokens=120
         )
 
-        st.subheader("💬 Resposta sugerida")
-        st.write(response.choices[0].message.content)
+        ferramentas = resposta_tools.choices[0].message.content
+
+        st.info(ferramentas)
+
+# ------------------------------
+# BOTÕES
+# ------------------------------
+
+colb1, colb2, colb3 = st.columns(3)
+
+with colb1:
+    iniciar = st.button("Iniciar")
+
+with colb2:
+    atualizar = st.button("Atualizar")
+
+with colb3:
+    encerrar = st.button("Encerrar")
+
+st.divider()
+
+# ------------------------------
+# PERGUNTA DA ENTREVISTA
+# ------------------------------
+
+st.subheader("Pergunta da entrevista")
+
+pergunta_digitada = st.text_input(
+    "Digite a pergunta ou use o microfone"
+)
+
+audio = audio_recorder(text="Click to record")
+
+client = get_client()
+
+# ------------------------------
+# PERGUNTA DIGITADA
+# ------------------------------
+
+if pergunta_digitada:
+
+    st.session_state.transcricao = pergunta_digitada
+
+# ------------------------------
+# PERGUNTA POR ÁUDIO
+# ------------------------------
+
+elif audio:
+
+    audio_hash = hashlib.sha1(audio).hexdigest()
+
+    if audio_hash != st.session_state.last_audio_hash:
+
+        st.session_state.last_audio_hash = audio_hash
+
+        with st.spinner("Transcrevendo pergunta..."):
+
+            audio_file = io.BytesIO(audio)
+            audio_file.name = "audio.wav"
+
+            transcricao = client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file
+            )
+
+            st.session_state.transcricao = transcricao.text
+
+# ------------------------------
+# TRANSCRIÇÃO
+# ------------------------------
+
+st.subheader("Transcrição da pergunta")
+
+st.text_area(
+    "Pergunta detectada",
+    value=st.session_state.transcricao,
+    height=100
+)
+
+# ------------------------------
+# GERAR RESPOSTA
+# ------------------------------
+
+if st.session_state.transcricao:
+
+    with st.spinner("Gerando resposta estratégica..."):
+
+        resposta = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": """
+Responda como um humano em entrevista, de forma natural e direta.
+
+Regras:
+- Seja rápido e objetivo
+- Não invente informação
+- Não repita conteúdo
+- Use tom coloquial, como conversa
+- Só aprofunde se a pergunta exigir
+- Se a pergunta for simples, responda em 1 ou 2 frases
+- Evite linguagem robótica ou técnica excessiva
+"""
+                },
+                {
+                    "role": "user",
+                    "content": f"""
+Empresa: {empresa}
+
+Descrição da vaga:
+{vaga}
+
+Currículo:
+{st.session_state.cv_text}
+
+Pergunta:
+{st.session_state.transcricao}
+"""
+                }
+            ],
+            max_tokens=120
+        )
+
+        st.session_state.resposta = resposta.choices[0].message.content
+
+# ------------------------------
+# RESPOSTA
+# ------------------------------
+
+st.subheader("Resposta estratégica")
+
+st.text_area(
+    "Resposta baseada na vaga, currículo e pergunta",
+    value=st.session_state.resposta,
+    height=180
+)
