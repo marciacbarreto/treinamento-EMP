@@ -1,7 +1,6 @@
 import streamlit as st
 import io
 import hashlib
-import re
 from openai import OpenAI
 from audio_recorder_streamlit import audio_recorder
 import PyPDF2
@@ -72,28 +71,22 @@ def extrair_texto_cv(uploaded_file):
         return uploaded_file.read().decode("utf-8", errors="ignore")
 
 # ------------------------------
-# CLASSIFICADOR DE PERGUNTA
+# CLASSIFICADOR
 # ------------------------------
 
 def tipo_pergunta(texto):
-    if not texto:
-        return "geral"
-
     t = texto.lower()
 
-    if any(p in t for p in ["trajetoria", "trajetória", "sobre você", "quem é você"]):
+    if "trajet" in t:
         return "trajetoria"
 
-    if any(p in t for p in ["desafio", "erro", "case", "problema", "situação", "conflito"]):
+    if any(p in t for p in ["desafio", "case", "erro", "problema"]):
         return "star"
-
-    if any(p in t for p in ["sql", "dados", "processo", "como fazer"]):
-        return "tecnica"
 
     return "geral"
 
 # ------------------------------
-# TÍTULO
+# UI
 # ------------------------------
 
 st.title("Treinamento EMP")
@@ -110,150 +103,98 @@ with col2:
 
     if uploaded_cv:
         st.session_state.cv_text = extrair_texto_cv(uploaded_cv)
-        st.success("Currículo carregado")
 
 # ------------------------------
 # PERGUNTA
 # ------------------------------
 
-st.subheader("Pergunta da entrevista")
+pergunta = st.text_input("Pergunta")
 
-pergunta_digitada = st.text_input("Digite a pergunta ou use o microfone")
-audio = audio_recorder(text="Click to record")
-
-if pergunta_digitada:
-    st.session_state.transcricao = pergunta_digitada
-
-elif audio:
-    audio_file = io.BytesIO(audio)
-    audio_file.name = "audio.wav"
-
-    transcricao = client.audio.transcriptions.create(
-        model="whisper-1",
-        file=audio_file
-    )
-
-    st.session_state.transcricao = transcricao.text
-
-st.text_area("Pergunta detectada", value=st.session_state.transcricao, height=100)
+if pergunta:
+    st.session_state.transcricao = pergunta
 
 # ------------------------------
-# GERAR RESPOSTA
+# RESPOSTA
 # ------------------------------
 
 if st.session_state.transcricao:
 
     tipo = tipo_pergunta(st.session_state.transcricao)
 
-    prompt_extra = ""
+    prompt_contexto = f"""
+Responda considerando a empresa e a vaga.
 
-    # TRAJETÓRIA
-    if tipo == "trajetoria":
-        prompt_extra = """
-Responder como narrativa profissional:
-- início da carreira
-- evolução
-- experiências relevantes
-- momento atual
-- conexão com a vaga
-Sem STAR.
-"""
+Se a vaga indicar uso de CRM ou atendimento:
+- Utilize como base Salesforce e Zendesk
+- Mas adapte conforme o contexto da empresa
 
-    # STAR
-    elif tipo == "star":
-        prompt_extra = """
-Responder obrigatoriamente no formato:
+Use esta base obrigatória na resposta:
 
-S (Situação):
-T (Tarefa):
-A (Ação):
-R (Resultado):
+"Eu costumo trabalhar com relatórios extraídos de ferramentas como Salesforce e Zendesk para entender tanto a performance comercial quanto operacional. 
+No Salesforce, analiso produtividade, carteira e volume; no Zendesk, acompanho SLA, backlog e motivos de contato. 
+Como coordenadora, meu papel é analisar esses dados, direcionar o time e garantir que as ferramentas estejam bem estruturadas para gerar insights. 
+A partir disso, consolido as informações em dashboards, como no Power BI, e consigo identificar gargalos, direcionar melhorias e apoiar a tomada de decisão."
 
-Curto, objetivo, 1 a 2 linhas por bloco.
-"""
-
-    # TÉCNICO
-    elif tipo == "tecnica":
-        prompt_extra = """
-Resposta direta:
-- lógica simples
-- passos curtos
-- código se necessário
+A resposta deve:
+- ser natural
+- adaptar levemente ao contexto da vaga
+- não parecer decorada
+- manter clareza e objetividade
 """
 
     resposta = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {
-                "role": "system",
-                "content": f"""
-Responda como um humano em entrevista.
-
-Seja claro, direto e natural.
-
-{prompt_extra}
-"""
-            },
-            {
-                "role": "user",
-                "content": f"""
+            {"role": "system", "content": prompt_contexto},
+            {"role": "user", "content": f"""
 Empresa: {empresa}
 Vaga: {vaga}
-Currículo: {st.session_state.cv_text}
 Pergunta: {st.session_state.transcricao}
-"""
-            }
+"""}
         ],
-        max_tokens=220
+        max_tokens=200
     )
 
     st.session_state.resposta = resposta.choices[0].message.content
 
 # ------------------------------
-# RESPOSTA
+# EXIBIÇÃO
 # ------------------------------
 
 st.subheader("Resposta estratégica")
 
 st.text_area(
-    "Resposta baseada na vaga, currículo e pergunta",
+    "Resposta",
     value=st.session_state.resposta,
     height=220
 )
 
 # ------------------------------
-# NOVO BLOCO - FERRAMENTAS
+# FERRAMENTAS (ADICIONADO)
 # ------------------------------
 
 if st.session_state.resposta:
 
     st.subheader("Ferramentas utilizadas na resposta")
 
-    with st.spinner("Identificando ferramentas..."):
-
-        ferramentas_resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": """
-Analise a resposta e identifique ferramentas utilizadas.
-
-Regras:
-- Listar até 5 ferramentas
-- Explicar para que serviram
-- Não inventar
+    ferramentas = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {
+                "role": "system",
+                "content": """
+Liste as ferramentas citadas na resposta e explique para que servem.
 
 Formato:
 Ferramenta - uso
 """
-                },
-                {
-                    "role": "user",
-                    "content": st.session_state.resposta
-                }
-            ],
-            max_tokens=150
-        )
+            },
+            {
+                "role": "user",
+                "content": st.session_state.resposta
+            }
+        ],
+        max_tokens=120
+    )
 
-        st.info(ferramentas_resp.choices[0].message.content)
+    st.info(ferramentas.choices[0].message.content)
