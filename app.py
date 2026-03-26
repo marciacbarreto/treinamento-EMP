@@ -1,210 +1,148 @@
 import streamlit as st
-import io
-import hashlib
-import time
 from openai import OpenAI
-from audio_recorder_streamlit import audio_recorder
-import PyPDF2
-import docx
 
 # ------------------------------
 # CONFIGURAÇÃO
 # ------------------------------
-st.set_page_config(page_title="Treinamento EMP PRO", layout="wide")
+
+st.set_page_config(page_title="Treinamento EMP", layout="wide")
+
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 # ------------------------------
-# ESTADO
+# PROMPT BASE (SEU PROMPT FINAL)
 # ------------------------------
-defaults = {
-    "transcricao": "",
-    "resposta": "",
-    "cv_text": "",
-    "last_audio_hash": "",
-    "buffer": "",
-    "last_update": time.time(),
-    "history": [],
-    "resposta_parcial": ""
-}
 
-for k, v in defaults.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
+PROMPT_BASE = """
+Você é um assistente de preparação para entrevistas.
 
-# ------------------------------
-# OPENAI
-# ------------------------------
-def get_client():
-    api_key = st.secrets.get("OPENAI_API_KEY", "")
-    return OpenAI(api_key=api_key)
+Siga TODAS as regras abaixo rigorosamente:
 
-client = get_client()
+- Sempre cruze as informações da vaga com o currículo antes de responder.
 
-# ------------------------------
-# CV
-# ------------------------------
-def extrair_texto_cv(uploaded_file):
-    if uploaded_file is None:
-        return ""
+- Identifique as ferramentas, sistemas e metodologias mencionadas na vaga (ex: Excel, Power BI, SAP, SQL, CRM, Lean, Six Sigma, etc.).
 
-    name = uploaded_file.name.lower()
+- Utilize apenas ferramentas que:
+  - estejam no currículo, ou  
+  - façam sentido com a experiência descrita (sem inventar uso direto).
 
-    if name.endswith(".pdf"):
-        pdf = PyPDF2.PdfReader(uploaded_file)
-        return "\n".join([p.extract_text() for p in pdf.pages if p.extract_text()])
+- Quando a vaga mencionar uma ferramenta:
+  - Se estiver no currículo → afirmar experiência direta  
+  - Se não estiver → demonstrar conhecimento ou similaridade (sem mentir)
 
-    elif name.endswith(".docx"):
-        doc = docx.Document(uploaded_file)
-        return "\n".join([p.text for p in doc.paragraphs])
+- Explique sempre para que serve a ferramenta dentro da função da vaga, não apenas citar.
 
-    else:
-        return uploaded_file.read().decode("utf-8", errors="ignore")
+- Conecte a ferramenta com uma atividade real do currículo.
 
-# ------------------------------
-# UI
-# ------------------------------
-st.title("Treinamento EMP PRO (Tempo Real)")
+- Mostre impacto (ex: melhoria de processo, ganho de eficiência, controle, redução de erros, apoio à decisão).
 
-empresa = st.text_input("Empresa")
-vaga = st.text_area("Descrição da vaga")
+- Evite respostas genéricas — sempre contextualizar com algo concreto.
 
-uploaded_cv = st.file_uploader("Currículo", type=["pdf","docx","txt"])
+- Linguagem natural, como conversa, sem parecer robótico.
 
-if uploaded_cv:
-    st.session_state.cv_text = extrair_texto_cv(uploaded_cv)
+---
 
-# ------------------------------
-# PREDIÇÃO
-# ------------------------------
-def prever_intencao(texto):
-    texto = texto.lower()
+- Sempre que a vaga mencionar ferramentas, sistemas ou metodologias, inclua essas ferramentas na resposta explicando o uso prático.
 
-    if "tell me about" in texto:
-        return "behavioral"
-    if "how" in texto:
-        return "situational"
-    if "why" in texto:
-        return "reasoning"
+- Não apenas cite — explique o uso (ex: análise de dados, controle, automação, decisão).
 
-    return "general"
+- Se não estiver explícita na vaga, mas fizer sentido, pode incluir sem inventar experiência.
 
-# ------------------------------
-# PROMPT DINÂMICO
-# ------------------------------
-def build_prompt(pergunta):
-    return f"""
-Você está em uma entrevista.
+---
 
-Pergunta:
-{pergunta}
+- Respostas entre 5 e 8 linhas, diretas e faláveis.
 
-Empresa:
-{empresa}
+- Não parecer texto escrito — parecer fala natural de entrevista.
 
-Vaga:
-{vaga}
+- Estrutura interna:
+  contexto → conexão com vaga → ferramentas → impacto
 
-Currículo:
-{st.session_state.cv_text}
+- Adaptar conforme a pergunta:
+  - comportamental → situação, ação, resultado
+  - técnica → ferramentas + execução
+  - carreira → narrativa coerente
 
-Responda:
-- Natural
-- Curto
-- Como humano
-- Sem parecer IA
+- Tom seguro (sem "acho", "talvez").
+
+- Variar início das respostas.
+
+- Conectar sempre com a vaga.
+
+- Nunca inventar experiência.
+
+- Quando não tiver, usar aproximação inteligente.
+
+- Sempre fechar com impacto (eficiência, controle, decisão).
 """
 
 # ------------------------------
-# RESPOSTA
+# INTERFACE
 # ------------------------------
-def gerar_resposta(pergunta):
-    prompt = build_prompt(pergunta)
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=120
-    )
+st.title("🎯 Treinamento de Entrevista (Estilo Parakeet)")
 
-    return response.choices[0].message.content
+col1, col2 = st.columns(2)
 
-# ------------------------------
-# UI DE RESPOSTA DINÂMICA
-# ------------------------------
-placeholder_resposta = st.empty()
+with col1:
+    curriculo = st.text_area("📄 Cole o currículo", height=300)
+
+with col2:
+    vaga = st.text_area("📋 Cole a descrição da vaga", height=300)
+
+pergunta = st.text_input("❓ Pergunta da entrevista")
 
 # ------------------------------
-# ÁUDIO
+# CLASSIFICAÇÃO SIMPLES DE PERGUNTA
 # ------------------------------
-audio = audio_recorder(text="Gravar pergunta")
 
-if audio:
-    audio_hash = hashlib.sha1(audio).hexdigest()
+def classificar_pergunta(texto):
+    texto = texto.lower()
 
-    if audio_hash != st.session_state.last_audio_hash:
+    if any(p in texto for p in ["desafio", "erro", "conflito", "dificuldade"]):
+        return "comportamental"
+    elif any(p in texto for p in ["ferramenta", "tecnologia", "sistema", "processo"]):
+        return "tecnica"
+    elif any(p in texto for p in ["por que", "carreira", "mudou", "trajetoria"]):
+        return "carreira"
+    else:
+        return "geral"
 
-        st.session_state.last_audio_hash = audio_hash
+# ------------------------------
+# GERAÇÃO DE RESPOSTA
+# ------------------------------
 
-        audio_file = io.BytesIO(audio)
-        audio_file.name = "audio.wav"
+if st.button("Gerar Resposta"):
 
-        transcricao = client.audio.transcriptions.create(
-            model="whisper-1",
-            file=audio_file
+    if not curriculo or not vaga or not pergunta:
+        st.warning("Preencha currículo, vaga e pergunta.")
+    else:
+        tipo = classificar_pergunta(pergunta)
+
+        prompt_final = f"""
+{PROMPT_BASE}
+
+CURRÍCULO:
+{curriculo}
+
+VAGA:
+{vaga}
+
+TIPO DE PERGUNTA:
+{tipo}
+
+PERGUNTA:
+{pergunta}
+
+Responda conforme todas as regras.
+"""
+
+        response = client.chat.completions.create(
+            model="gpt-5.3",
+            messages=[{"role": "user", "content": prompt_final}],
+            temperature=0.4
         )
 
-        texto = transcricao.text
+        resposta = response.choices[0].message.content
 
-        # ------------------------------
-        # BUFFER DE FRAGMENTOS
-        # ------------------------------
-        st.session_state.buffer += " " + texto
-        st.session_state.last_update = time.time()
-
-        buffer_texto = st.session_state.buffer.strip()
-
-        st.subheader("🧠 Pergunta em construção")
-        st.write(buffer_texto)
-
-        # ------------------------------
-        # RESPOSTA ANTECIPADA
-        # ------------------------------
-        if len(buffer_texto.split()) > 4:
-
-            resposta_parcial = gerar_resposta(buffer_texto)
-
-            st.session_state.resposta_parcial = resposta_parcial
-
-            placeholder_resposta.markdown(
-                f"💬 **Resposta em tempo real:**\n\n{resposta_parcial}"
-            )
-
-# ------------------------------
-# FINALIZAÇÃO (SIMULA VAD)
-# ------------------------------
-tempo_parado = time.time() - st.session_state.last_update
-
-if st.session_state.buffer and tempo_parado > 2:
-
-    pergunta_final = st.session_state.buffer.strip()
-
-    st.subheader("✅ Pergunta final detectada")
-    st.write(pergunta_final)
-
-    resposta_final = gerar_resposta(pergunta_final)
-
-    st.session_state.resposta = resposta_final
-
-    placeholder_resposta.markdown(
-        f"🎯 **Resposta final:**\n\n{resposta_final}"
-    )
-
-    # ------------------------------
-    # HISTÓRICO
-    # ------------------------------
-    st.session_state.history.append({
-        "pergunta": pergunta_final,
-        "resposta": resposta_final
-    })
-
-    # Reset
-    st.session_state.buffer = ""
+        st.subheader("💬 Resposta sugerida")
+        st.write(resposta)
