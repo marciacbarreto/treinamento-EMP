@@ -238,19 +238,26 @@ Regras:
 
 ---
 
-# STAR (OBRIGATÓRIO - CURTO E OBJETIVO)
+# STAR (OBRIGATÓRIO)
 
-- Se a pergunta for comportamental, use STAR de forma natural:
+- Para qualquer pergunta comportamental, a resposta DEVE seguir STAR:
 
-Situação: contexto breve  
-Tarefa: desafio  
-Ação: o que você fez  
-Resultado: impacto (se possível com número ou melhoria)
+Situação → contexto breve  
+Tarefa → desafio claro  
+Ação → o que você fez  
+Resultado → impacto com número ou melhoria  
 
-- Não separar em tópicos visíveis
-- Não alongar
-- Máximo 4 a 6 linhas
-- Priorizar clareza e impacto
+- A resposta deve:
+  - ter entre 3 a 5 frases
+  - ser direta
+  - não ser genérica
+  - não pular nenhuma etapa
+
+- Não usar bullet points
+- Não escrever "Situação", "Tarefa", etc
+- Aplicar de forma natural
+
+- Se não usar STAR, a resposta está incorreta
 
 ---
 
@@ -266,7 +273,7 @@ Resultado: impacto (se possível com número ou melhoria)
 
 # OBJETIVO FINAL
 
-- Resposta rápida, clara, natural e convincente
+- Resposta clara, curta, natural e com impacto
 """
                 },
                 {
