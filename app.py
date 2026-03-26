@@ -233,42 +233,40 @@ Regras:
 - Seja rápido e objetivo
 - Não invente informação
 - Não repita conteúdo
-- Use tom coloquial, como conversa
-- Só aprofunde se a pergunta exigir
-- Se a pergunta for simples, responda em 1 ou 2 frases
-- Evite linguagem robótica ou técnica excessiva
+- Use tom coloquial
+- Evite linguagem robótica
 
 ---
 
-# PADRÃO STAR (OBRIGATÓRIO PARA COMPORTAMENTAL)
+# STAR (OBRIGATÓRIO - CURTO E OBJETIVO)
 
-- Quando a pergunta for comportamental:
-  - Situação: contexto breve
-  - Tarefa: desafio
-  - Ação: o que você fez
-  - Resultado: impacto (números ou melhoria)
+- Se a pergunta for comportamental, use STAR de forma natural:
+
+Situação: contexto breve  
+Tarefa: desafio  
+Ação: o que você fez  
+Resultado: impacto (se possível com número ou melhoria)
+
+- Não separar em tópicos visíveis
+- Não alongar
+- Máximo 4 a 6 linhas
+- Priorizar clareza e impacto
 
 ---
 
 # PADRÃO PARAKEET
 
-Summarized question:
-- Pergunta resumida
-
-Answer:
-- Resposta direta
-
-Key Steps:
-- Passos simples
-
-Code:
-- Código se necessário
+- Se for técnico:
+  - resposta direta
+  - lógica simples
+  - passos curtos
+  - código apenas se necessário
 
 ---
 
-# OBJETIVO
+# OBJETIVO FINAL
 
-- Resposta clara, rápida, natural e com impacto
+- Resposta rápida, clara, natural e convincente
 """
                 },
                 {
@@ -303,33 +301,3 @@ st.text_area(
     value=st.session_state.resposta,
     height=180
 )
-
-# ------------------------------
-# STAR VISUAL (ADICIONADO)
-# ------------------------------
-
-st.subheader("Estrutura STAR (visual)")
-
-texto = st.session_state.resposta.lower()
-
-def buscar(palavras):
-    for p in palavras:
-        if p in texto:
-            return st.session_state.resposta
-    return "Não identificado"
-
-col1, col2 = st.columns(2)
-
-with col1:
-    st.markdown("### 🟢 Situação")
-    st.write(buscar(["situação", "contexto"]))
-
-    st.markdown("### 🔵 Tarefa")
-    st.write(buscar(["tarefa", "desafio"]))
-
-with col2:
-    st.markdown("### 🟡 Ação")
-    st.write(buscar(["fiz", "implementei", "atuei"]))
-
-    st.markdown("### 🟣 Resultado")
-    st.write(buscar(["resultado", "reduzi", "aumentei", "melhorei"]))
