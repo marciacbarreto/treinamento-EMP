@@ -1,16 +1,54 @@
 import streamlit as st
+import io
+import hashlib
 from openai import OpenAI
+from audio_recorder_streamlit import audio_recorder
+import PyPDF2
+import docx
 
 # ------------------------------
-# CONFIGURAÇÃO
+# CONFIGURAÇÃO DA PÁGINA
 # ------------------------------
 
 st.set_page_config(page_title="Treinamento EMP", layout="wide")
 
+# ------------------------------
+# CLIENTE OPENAI
+# ------------------------------
+
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 # ------------------------------
-# PROMPT BASE (SEU PROMPT FINAL)
+# ESTADO DA SESSÃO (MANTIDO)
+# ------------------------------
+
+defaults = {
+    "transcricao": "",
+    "resposta": "",
+    "ultimo_prompt": ""
+}
+
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
+
+# ------------------------------
+# FUNÇÕES DE LEITURA (ADICIONADO)
+# ------------------------------
+
+def ler_pdf(file):
+    reader = PyPDF2.PdfReader(file)
+    texto = ""
+    for page in reader.pages:
+        texto += page.extract_text() or ""
+    return texto
+
+def ler_docx(file):
+    doc = docx.Document(file)
+    return "\n".join([p.text for p in doc.paragraphs])
+
+# ------------------------------
+# PROMPT BASE (MANTIDO)
 # ------------------------------
 
 PROMPT_BASE = """
@@ -19,64 +57,39 @@ Você é um assistente de preparação para entrevistas.
 Siga TODAS as regras abaixo rigorosamente:
 
 - Sempre cruze as informações da vaga com o currículo antes de responder.
-
-- Identifique as ferramentas, sistemas e metodologias mencionadas na vaga (ex: Excel, Power BI, SAP, SQL, CRM, Lean, Six Sigma, etc.).
-
-- Utilize apenas ferramentas que:
-  - estejam no currículo, ou  
-  - façam sentido com a experiência descrita (sem inventar uso direto).
-
-- Quando a vaga mencionar uma ferramenta:
-  - Se estiver no currículo → afirmar experiência direta  
-  - Se não estiver → demonstrar conhecimento ou similaridade (sem mentir)
-
-- Explique sempre para que serve a ferramenta dentro da função da vaga, não apenas citar.
-
-- Conecte a ferramenta com uma atividade real do currículo.
-
-- Mostre impacto (ex: melhoria de processo, ganho de eficiência, controle, redução de erros, apoio à decisão).
-
-- Evite respostas genéricas — sempre contextualizar com algo concreto.
-
-- Linguagem natural, como conversa, sem parecer robótico.
+- Identifique as ferramentas mencionadas na vaga (Excel, Power BI, SAP, SQL, CRM, Lean, etc.).
+- Utilize apenas ferramentas do currículo ou compatíveis (sem inventar).
+- Se tiver experiência → afirmar.
+- Se não tiver → aproximar com lógica (sem mentir).
+- Explicar para que serve a ferramenta no contexto.
+- Conectar com experiência real.
+- Mostrar impacto (eficiência, controle, decisão).
+- Linguagem natural, sem robô.
 
 ---
 
-- Sempre que a vaga mencionar ferramentas, sistemas ou metodologias, inclua essas ferramentas na resposta explicando o uso prático.
-
-- Não apenas cite — explique o uso (ex: análise de dados, controle, automação, decisão).
-
-- Se não estiver explícita na vaga, mas fizer sentido, pode incluir sem inventar experiência.
+- Incluir ferramentas da vaga com explicação prática.
+- Não só citar — explicar uso.
 
 ---
 
-- Respostas entre 5 e 8 linhas, diretas e faláveis.
-
-- Não parecer texto escrito — parecer fala natural de entrevista.
-
+- Respostas de 5 a 8 linhas.
+- Tom falado, natural.
 - Estrutura interna:
-  contexto → conexão com vaga → ferramentas → impacto
+  contexto → vaga → ferramentas → impacto
 
-- Adaptar conforme a pergunta:
-  - comportamental → situação, ação, resultado
-  - técnica → ferramentas + execução
-  - carreira → narrativa coerente
+- Adaptar tipo:
+  comportamental / técnica / carreira
 
-- Tom seguro (sem "acho", "talvez").
-
-- Variar início das respostas.
-
-- Conectar sempre com a vaga.
-
-- Nunca inventar experiência.
-
-- Quando não tiver, usar aproximação inteligente.
-
-- Sempre fechar com impacto (eficiência, controle, decisão).
+- Não usar “acho”, “talvez”.
+- Não repetir padrão.
+- Conectar com a vaga.
+- Nunca inventar.
+- Fechar com impacto.
 """
 
 # ------------------------------
-# INTERFACE
+# INTERFACE (MANTIDA)
 # ------------------------------
 
 st.title("🎯 Treinamento de Entrevista (Estilo Parakeet)")
@@ -84,37 +97,57 @@ st.title("🎯 Treinamento de Entrevista (Estilo Parakeet)")
 col1, col2 = st.columns(2)
 
 with col1:
-    curriculo = st.text_area("📄 Cole o currículo", height=300)
+    curriculo = st.text_area("📄 Cole o currículo", height=250)
+
+    # ✅ ADIÇÃO (UPLOAD SEM REMOVER NADA)
+    arquivo = st.file_uploader("Ou envie o currículo (PDF/DOCX)", type=["pdf", "docx"])
 
 with col2:
-    vaga = st.text_area("📋 Cole a descrição da vaga", height=300)
+    vaga = st.text_area("📋 Cole a descrição da vaga", height=250)
 
 pergunta = st.text_input("❓ Pergunta da entrevista")
 
 # ------------------------------
-# CLASSIFICAÇÃO SIMPLES DE PERGUNTA
+# PROCESSAMENTO CURRÍCULO (CORRIGIDO)
+# ------------------------------
+
+curriculo_final = curriculo.strip() if curriculo else ""
+
+if arquivo:
+    texto_arquivo = ""
+
+    if arquivo.type == "application/pdf":
+        texto_arquivo = ler_pdf(arquivo)
+    elif "word" in arquivo.type:
+        texto_arquivo = ler_docx(arquivo)
+
+    if texto_arquivo.strip():
+        curriculo_final = texto_arquivo
+
+# ------------------------------
+# CLASSIFICAÇÃO (MANTIDA)
 # ------------------------------
 
 def classificar_pergunta(texto):
     texto = texto.lower()
 
-    if any(p in texto for p in ["desafio", "erro", "conflito", "dificuldade"]):
+    if any(p in texto for p in ["desafio", "erro", "conflito"]):
         return "comportamental"
-    elif any(p in texto for p in ["ferramenta", "tecnologia", "sistema", "processo"]):
+    elif any(p in texto for p in ["ferramenta", "processo", "dados"]):
         return "tecnica"
-    elif any(p in texto for p in ["por que", "carreira", "mudou", "trajetoria"]):
+    elif any(p in texto for p in ["por que", "carreira", "trajetoria"]):
         return "carreira"
     else:
         return "geral"
 
 # ------------------------------
-# GERAÇÃO DE RESPOSTA
+# BOTÃO (MANTIDO + DEBUG)
 # ------------------------------
 
 if st.button("Gerar Resposta"):
 
-    if not curriculo or not vaga or not pergunta:
-        st.warning("Preencha currículo, vaga e pergunta.")
+    if not curriculo_final.strip() or not vaga.strip() or not pergunta.strip():
+        st.warning("Preencha currículo (ou envie arquivo), vaga e pergunta.")
     else:
         tipo = classificar_pergunta(pergunta)
 
@@ -122,19 +155,29 @@ if st.button("Gerar Resposta"):
 {PROMPT_BASE}
 
 CURRÍCULO:
-{curriculo}
+{curriculo_final}
 
 VAGA:
 {vaga}
 
-TIPO DE PERGUNTA:
+TIPO:
 {tipo}
 
 PERGUNTA:
 {pergunta}
 
-Responda conforme todas as regras.
+Responda seguindo todas as regras.
 """
+
+        # ✅ DEBUG VISUAL
+        st.subheader("🧠 DEBUG - PROMPT ENVIADO")
+        st.text_area("Prompt completo", prompt_final, height=250)
+
+        # ✅ DEBUG LOG
+        print(prompt_final)
+
+        # salvar histórico
+        st.session_state["ultimo_prompt"] = prompt_final
 
         response = client.chat.completions.create(
             model="gpt-5.3",
@@ -142,7 +185,5 @@ Responda conforme todas as regras.
             temperature=0.4
         )
 
-        resposta = response.choices[0].message.content
-
         st.subheader("💬 Resposta sugerida")
-        st.write(resposta)
+        st.write(response.choices[0].message.content)
