@@ -48,6 +48,8 @@ def get_client():
     api_key = st.secrets.get("OPENAI_API_KEY", "")
     return OpenAI(api_key=api_key)
 
+client = get_client()
+
 # ------------------------------
 # EXTRAIR TEXTO DO CURRÍCULO
 # ------------------------------
@@ -85,7 +87,7 @@ def tipo_pergunta(texto):
     if any(p in t for p in ["desafio", "erro", "case", "problema", "situação", "conflito"]):
         return "star"
 
-    if any(p in t for p in ["como fazer", "código", "processo", "dados", "sql"]):
+    if any(p in t for p in ["sql", "dados", "processo", "como fazer"]):
         return "tecnica"
 
     return "geral"
@@ -119,8 +121,6 @@ st.subheader("Pergunta da entrevista")
 pergunta_digitada = st.text_input("Digite a pergunta ou use o microfone")
 audio = audio_recorder(text="Click to record")
 
-client = get_client()
-
 if pergunta_digitada:
     st.session_state.transcricao = pergunta_digitada
 
@@ -138,7 +138,7 @@ elif audio:
 st.text_area("Pergunta detectada", value=st.session_state.transcricao, height=100)
 
 # ------------------------------
-# RESPOSTA
+# GERAR RESPOSTA
 # ------------------------------
 
 if st.session_state.transcricao:
@@ -147,21 +147,19 @@ if st.session_state.transcricao:
 
     prompt_extra = ""
 
-    # 🔹 TRAJETÓRIA
+    # TRAJETÓRIA
     if tipo == "trajetoria":
         prompt_extra = """
-Responda como narrativa profissional:
-
+Responder como narrativa profissional:
 - início da carreira
 - evolução
 - experiências relevantes
 - momento atual
 - conexão com a vaga
-
-Resposta fluida, sem STAR.
+Sem STAR.
 """
 
-    # 🔹 STAR
+    # STAR
     elif tipo == "star":
         prompt_extra = """
 Responder obrigatoriamente no formato:
@@ -171,11 +169,10 @@ T (Tarefa):
 A (Ação):
 R (Resultado):
 
-Cada bloco com 1 a 2 linhas.
-Curto, direto e com impacto.
+Curto, objetivo, 1 a 2 linhas por bloco.
 """
 
-    # 🔹 TÉCNICO
+    # TÉCNICO
     elif tipo == "tecnica":
         prompt_extra = """
 Resposta direta:
@@ -192,7 +189,7 @@ Resposta direta:
                 "content": f"""
 Responda como um humano em entrevista.
 
-Seja direto, claro e natural.
+Seja claro, direto e natural.
 
 {prompt_extra}
 """
@@ -207,13 +204,13 @@ Pergunta: {st.session_state.transcricao}
 """
             }
         ],
-        max_tokens=200
+        max_tokens=220
     )
 
     st.session_state.resposta = resposta.choices[0].message.content
 
 # ------------------------------
-# EXIBIÇÃO
+# RESPOSTA
 # ------------------------------
 
 st.subheader("Resposta estratégica")
@@ -223,3 +220,40 @@ st.text_area(
     value=st.session_state.resposta,
     height=220
 )
+
+# ------------------------------
+# NOVO BLOCO - FERRAMENTAS
+# ------------------------------
+
+if st.session_state.resposta:
+
+    st.subheader("Ferramentas utilizadas na resposta")
+
+    with st.spinner("Identificando ferramentas..."):
+
+        ferramentas_resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": """
+Analise a resposta e identifique ferramentas utilizadas.
+
+Regras:
+- Listar até 5 ferramentas
+- Explicar para que serviram
+- Não inventar
+
+Formato:
+Ferramenta - uso
+"""
+                },
+                {
+                    "role": "user",
+                    "content": st.session_state.resposta
+                }
+            ],
+            max_tokens=150
+        )
+
+        st.info(ferramentas_resp.choices[0].message.content)
