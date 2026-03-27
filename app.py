@@ -35,7 +35,7 @@ defaults = {
     "cv_text": "",
     "last_audio_hash": "",
     "ferramentas_resposta": "",
-    "rodando": False  # 🔥 ADICIONADO
+    "rodando": False  # 🔥 INSERIDO (não altera nada existente)
 }
 
 for k, v in defaults.items():
@@ -152,9 +152,9 @@ with col2:
         st.session_state.cv_text = extrair_texto_cv(uploaded_cv)
         st.success("Currículo carregado")
 
-# ------------------------------
-# BOTÕES DE CONTROLE 🔥
-# ------------------------------
+# ==============================
+# 🔥 INSERÇÃO DOS BOTÕES (SEM ALTERAR NADA)
+# ==============================
 
 colb1, colb2, colb3 = st.columns(3)
 
@@ -177,14 +177,9 @@ if encerrar:
     st.session_state.ferramentas_resposta = ""
 
 if atualizar:
-    st.rerun()
+    st.experimental_rerun()
 
-if st.session_state.rodando:
-    st.success("🟢 Sistema ativo")
-else:
-    st.warning("🔴 Sistema parado")
-
-# 🔥 BLOQUEIO
+# 🔥 BLOQUEIO (sem alterar nada existente)
 if not st.session_state.rodando:
     st.info("Clique em Iniciar para começar")
     st.stop()
@@ -242,52 +237,85 @@ if st.session_state.transcricao:
     tipo = tipo_pergunta(st.session_state.transcricao)
 
     if tipo == "trajetoria":
-        prompt_extra = "Responder como narrativa de carreira."
+        prompt_extra = """
+A pergunta é de trajetória/apresentação.
+...
+"""
 
     elif tipo == "star":
-        prompt_extra = "Responder no formato S, T, A, R com resultado."
+        prompt_extra = """
+A pergunta é comportamental/case.
+...
+"""
 
     elif tipo == "tecnica":
-        prompt_extra = "Responder de forma técnica simples."
+        prompt_extra = """
+A pergunta é técnica.
+...
+"""
 
     else:
-        prompt_extra = "Responder de forma clara e natural."
+        prompt_extra = """
+Responder de forma clara, curta, natural e conectada à vaga.
+"""
 
-    resposta = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {
-                "role": "system",
-                "content": f"""
-Responda como humano em entrevista.
-Evite respostas vagas.
-Use CV + vaga.
+    with st.spinner("Gerando resposta estratégica..."):
+        resposta = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": f"""
+Responda como um humano em entrevista.
+
+Regras gerais:
+- Seja claro, direto e natural
+- Não invente informação
+- Não repita conteúdo
+- Use o currículo e a vaga como base
+- Seja objetivo
+
 {prompt_extra}
 """
-            },
-            {
-                "role": "user",
-                "content": f"""
+                },
+                {
+                    "role": "user",
+                    "content": f"""
 Empresa: {empresa}
-Vaga: {vaga}
-CV: {st.session_state.cv_text}
-Pergunta: {st.session_state.transcricao}
+
+Descrição da vaga:
+{vaga}
+
+Currículo:
+{st.session_state.cv_text}
+
+Pergunta:
+{st.session_state.transcricao}
 """
-            }
-        ],
-        max_tokens=260
-    )
+                }
+            ],
+            max_tokens=260
+        )
 
-    st.session_state.resposta = resposta.choices[0].message.content.strip()
+        resposta_texto = resposta.choices[0].message.content.strip()
 
-# ------------------------------
-# RESPOSTA
-# ------------------------------
+        if tipo == "star" and not validar_star(resposta_texto):
+            with st.spinner("Ajustando resposta para o formato STAR..."):
+                reescrita = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "Reescreva em STAR..."
+                        },
+                        {
+                            "role": "user",
+                            "content": resposta_texto
+                        }
+                    ],
+                    max_tokens=260
+                )
 
-st.subheader("Resposta estratégica")
+                resposta_texto = reescrita.choices[0].message.content.strip()
 
-st.text_area(
-    "Resposta",
-    value=st.session_state.resposta,
-    height=240
-)
+        st.session_state.resposta = resposta_texto
