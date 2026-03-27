@@ -35,7 +35,7 @@ defaults = {
     "cv_text": "",
     "last_audio_hash": "",
     "ferramentas_resposta": "",
-    "rodando": False  # 🔥 INSERIDO (não altera nada existente)
+    "rodando": False
 }
 
 for k, v in defaults.items():
@@ -152,9 +152,9 @@ with col2:
         st.session_state.cv_text = extrair_texto_cv(uploaded_cv)
         st.success("Currículo carregado")
 
-# ==============================
-# 🔥 INSERÇÃO DOS BOTÕES (SEM ALTERAR NADA)
-# ==============================
+# ------------------------------
+# BOTÕES (INSERIDO)
+# ------------------------------
 
 colb1, colb2, colb3 = st.columns(3)
 
@@ -179,7 +179,6 @@ if encerrar:
 if atualizar:
     st.experimental_rerun()
 
-# 🔥 BLOQUEIO (sem alterar nada existente)
 if not st.session_state.rodando:
     st.info("Clique em Iniciar para começar")
     st.stop()
@@ -239,19 +238,53 @@ if st.session_state.transcricao:
     if tipo == "trajetoria":
         prompt_extra = """
 A pergunta é de trajetória/apresentação.
-...
+
+Responda como narrativa profissional, sem STAR.
+Estrutura:
+- início da carreira
+- evolução
+- experiências mais relevantes
+- momento atual
+- conexão com a vaga
+
+A resposta deve ser fluida, natural e objetiva.
 """
 
     elif tipo == "star":
         prompt_extra = """
 A pergunta é comportamental/case.
-...
+
+Responder obrigatoriamente neste formato visível:
+
+S (Situação):
+- Contextualize rapidamente onde e quando aconteceu.
+
+T (Tarefa):
+- Explique qual era o problema ou desafio específico.
+
+A (Ação):
+- Descreva exatamente o que você fez.
+- Foque no "eu", não apenas no "nós".
+
+R (Resultado):
+- Mostre o resultado com números, ganhos, melhoria, redução de problema ou aprendizado.
+
+Regras:
+- Os blocos S, T, A e R devem aparecer escritos.
+- Cada bloco deve ter 1 ou 2 linhas.
+- Não responder em texto corrido.
+- Não pode faltar nenhuma das quatro partes.
 """
 
     elif tipo == "tecnica":
         prompt_extra = """
 A pergunta é técnica.
-...
+
+Responder de forma direta:
+- lógica simples
+- passos curtos
+- ferramenta usada
+- código apenas se necessário
 """
 
     else:
@@ -306,11 +339,37 @@ Pergunta:
                     messages=[
                         {
                             "role": "system",
-                            "content": "Reescreva em STAR..."
+                            "content": """
+Reescreva a resposta obrigatoriamente em STAR visível:
+
+S (Situação):
+...
+
+T (Tarefa):
+...
+
+A (Ação):
+...
+
+R (Resultado):
+...
+
+Regras:
+- Não inventar informação
+- Cada bloco deve ter 1 ou 2 linhas
+- Resposta curta e objetiva
+- Manter aderência ao currículo e à pergunta
+"""
                         },
                         {
                             "role": "user",
-                            "content": resposta_texto
+                            "content": f"""
+Pergunta:
+{st.session_state.transcricao}
+
+Resposta atual:
+{resposta_texto}
+"""
                         }
                     ],
                     max_tokens=260
@@ -319,3 +378,62 @@ Pergunta:
                 resposta_texto = reescrita.choices[0].message.content.strip()
 
         st.session_state.resposta = resposta_texto
+
+        ferramentas_resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": """
+Analise a resposta e identifique as ferramentas utilizadas, citadas ou implícitas.
+
+Regras:
+- Liste somente ferramentas que façam sentido no contexto
+- Explique para que serviram na resposta
+- Não inventar ferramentas fora do contexto
+- Máximo 5 itens
+
+Formato:
+Ferramenta - para que serviu
+"""
+                },
+                {
+                    "role": "user",
+                    "content": f"""
+Resposta:
+{st.session_state.resposta}
+
+Vaga:
+{vaga}
+"""
+                }
+            ],
+            max_tokens=180
+        )
+
+        st.session_state.ferramentas_resposta = ferramentas_resp.choices[0].message.content.strip()
+
+# ------------------------------
+# RESPOSTA
+# ------------------------------
+
+st.subheader("Resposta estratégica")
+
+st.text_area(
+    "Resposta baseada na vaga, currículo e pergunta",
+    value=st.session_state.resposta,
+    height=240
+)
+
+# ------------------------------
+# QUADRO DE FERRAMENTAS
+# ------------------------------
+
+if st.session_state.ferramentas_resposta:
+    st.subheader("Ferramentas utilizadas na resposta")
+
+    st.text_area(
+        "Ferramentas e para que serviram",
+        value=st.session_state.ferramentas_resposta,
+        height=140
+    )
