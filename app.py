@@ -1,4 +1,3 @@
-2-------------
 import streamlit as st
 import io
 import hashlib
