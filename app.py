@@ -1,62 +1,44 @@
 import streamlit as st
 import io
 import hashlib
-import re
 from openai import OpenAI
 from audio_recorder_streamlit import audio_recorder
 import PyPDF2
 import docx
 
-# ------------------------------
-# CONFIGURAÇÃO DA PÁGINA
-# ------------------------------
-
 st.set_page_config(page_title="Treinamento EMP", layout="wide")
 
-# ------------------------------
-# CSS - FONTE 11
-# ------------------------------
-
-st.markdown("""
-<style>
-div[data-testid="stTextArea"] textarea {
-    font-size: 11px !important;
-}
-</style>
-""", unsafe_allow_html=True)
-
-# ------------------------------
+# -------------------------
 # ESTADO DA SESSÃO
-# ------------------------------
+# -------------------------
 
 defaults = {
     "transcricao": "",
     "resposta": "",
     "cv_text": "",
-    "last_audio_hash": "",
-    "ferramentas_resposta": "",
-    "rodando": False
+    "last_audio_hash": ""
 }
 
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-# ------------------------------
+
+# -------------------------
 # CLIENTE OPENAI
-# ------------------------------
+# -------------------------
 
 def get_client():
     api_key = st.secrets.get("OPENAI_API_KEY", "")
     return OpenAI(api_key=api_key)
 
-client = get_client()
 
-# ------------------------------
-# EXTRAIR TEXTO DO CURRÍCULO
-# ------------------------------
+# -------------------------
+# EXTRAIR TEXTO DO CV
+# -------------------------
 
 def extrair_texto_cv(uploaded_file):
+
     if uploaded_file is None:
         return ""
 
@@ -73,73 +55,17 @@ def extrair_texto_cv(uploaded_file):
     else:
         return uploaded_file.read().decode("utf-8", errors="ignore")
 
-# ------------------------------
-# CLASSIFICAÇÃO DA PERGUNTA
-# ------------------------------
 
-def tipo_pergunta(texto: str) -> str:
-    if not texto:
-        return "geral"
-
-    t = texto.lower().strip()
-
-    if any(p in t for p in [
-        "trajetoria", "trajetória", "fale sobre você", "conte sobre você",
-        "apresente-se", "me fale da sua carreira", "conte sua carreira"
-    ]):
-        return "trajetoria"
-
-    if any(p in t for p in [
-        "conte um case", "me conte um case", "fale de um case",
-        "conte uma situação", "me fale de uma situação",
-        "desafio", "problema", "erro", "conflito", "resultado",
-        "exemplo", "case da gol", "conte um exemplo", "me dê um exemplo",
-        "situação", "quando você", "ocasião em que"
-    ]):
-        return "star"
-
-    if any(p in t for p in [
-        "sql", "power bi", "dashboard", "dados", "query", "processo",
-        "como fazer", "como funciona", "fluxo", "arquitetura", "indicador",
-        "kpi", "causa raiz"
-    ]):
-        return "tecnica"
-
-    return "geral"
-
-# ------------------------------
-# VALIDAÇÃO STAR
-# ------------------------------
-
-def validar_star(texto: str) -> bool:
-    if not texto:
-        return False
-
-    padroes = [
-        r"(?im)^\s*S\s*\(\s*Situa[cç][aã]o\s*\)\s*:",
-        r"(?im)^\s*T\s*\(\s*Tarefa\s*\)\s*:",
-        r"(?im)^\s*A\s*\(\s*A[cç][aã]o\s*\)\s*:",
-        r"(?im)^\s*R\s*\(\s*Resultado\s*\)\s*:"
-    ]
-
-    return all(re.search(p, texto) for p in padroes)
-
-# ------------------------------
-# TÍTULO
-# ------------------------------
+# -------------------------
+# INTERFACE
+# -------------------------
 
 st.title("Treinamento EMP")
 
-# ------------------------------
 # EMPRESA
-# ------------------------------
-
 empresa = st.text_input("Empresa")
 
-# ------------------------------
-# DESCRIÇÃO DA VAGA + CURRÍCULO
-# ------------------------------
-
+# VAGA + CURRÍCULO
 col1, col2 = st.columns(2)
 
 with col1:
@@ -152,9 +78,26 @@ with col2:
         st.session_state.cv_text = extrair_texto_cv(uploaded_cv)
         st.success("Currículo carregado")
 
-# ------------------------------
-# BOTÕES (INSERIDO)
-# ------------------------------
+# -------------------------
+# FERRAMENTAS
+# -------------------------
+
+st.subheader("Ferramentas que a empresa trabalha (Explicação)")
+
+st.info("""
+Jira (gestão de backlog e tarefas ágeis) /
+Confluence (documentação e governança de processos) /
+Miro (mapas colaborativos e desenho de jornadas) /
+Google Analytics (análise de comportamento no e-commerce) /
+Power BI (monitoramento de indicadores e dashboards) /
+Adobe Experience Manager (gestão de conteúdo digital) /
+Slack (comunicação entre áreas) /
+ChatGPT (IA para análise e otimização de processos)
+""")
+
+# -------------------------
+# BOTÕES
+# -------------------------
 
 colb1, colb2, colb3 = st.columns(3)
 
@@ -167,45 +110,46 @@ with colb2:
 with colb3:
     encerrar = st.button("Encerrar")
 
-if iniciar:
-    st.session_state.rodando = True
+st.divider()
 
-if encerrar:
-    st.session_state.rodando = False
-    st.session_state.transcricao = ""
-    st.session_state.resposta = ""
-    st.session_state.ferramentas_resposta = ""
-
-if atualizar:
-    st.experimental_rerun()
-
-if not st.session_state.rodando:
-    st.info("Clique em Iniciar para começar")
-    st.stop()
-
-# ------------------------------
+# -------------------------
 # PERGUNTA DA ENTREVISTA
-# ------------------------------
+# -------------------------
 
 st.subheader("Pergunta da entrevista")
 
-pergunta_digitada = st.text_input("Digite a pergunta ou use o microfone")
+# campo para digitar pergunta
+pergunta_digitada = st.text_input(
+    "Digite a pergunta ou use o microfone"
+)
+
+# microfone
 audio = audio_recorder(text="Click to record")
 
-# ------------------------------
-# PERGUNTA DIGITADA / ÁUDIO
-# ------------------------------
+client = get_client()
+
+# -------------------------
+# SE PERGUNTA FOR DIGITADA
+# -------------------------
 
 if pergunta_digitada:
+
     st.session_state.transcricao = pergunta_digitada
 
+# -------------------------
+# SE PERGUNTA VIER DO ÁUDIO
+# -------------------------
+
 elif audio:
+
     audio_hash = hashlib.sha1(audio).hexdigest()
 
     if audio_hash != st.session_state.last_audio_hash:
+
         st.session_state.last_audio_hash = audio_hash
 
         with st.spinner("Transcrevendo pergunta..."):
+
             audio_file = io.BytesIO(audio)
             audio_file.name = "audio.wav"
 
@@ -216,99 +160,30 @@ elif audio:
 
             st.session_state.transcricao = transcricao.text
 
-# ------------------------------
-# TRANSCRIÇÃO
-# ------------------------------
-
-st.subheader("Transcrição da pergunta")
-
-st.text_area(
-    "Pergunta detectada",
-    value=st.session_state.transcricao,
-    height=100
-)
-
-# ------------------------------
+# -------------------------
 # GERAR RESPOSTA
-# ------------------------------
+# -------------------------
 
 if st.session_state.transcricao:
-    tipo = tipo_pergunta(st.session_state.transcricao)
-
-    if tipo == "trajetoria":
-        prompt_extra = """
-A pergunta é de trajetória/apresentação.
-
-Responda como narrativa profissional, sem STAR.
-Estrutura:
-- início da carreira
-- evolução
-- experiências mais relevantes
-- momento atual
-- conexão com a vaga
-
-A resposta deve ser fluida, natural e objetiva.
-"""
-
-    elif tipo == "star":
-        prompt_extra = """
-A pergunta é comportamental/case.
-
-Responder obrigatoriamente neste formato visível:
-
-S (Situação):
-- Contextualize rapidamente onde e quando aconteceu.
-
-T (Tarefa):
-- Explique qual era o problema ou desafio específico.
-
-A (Ação):
-- Descreva exatamente o que você fez.
-- Foque no "eu", não apenas no "nós".
-
-R (Resultado):
-- Mostre o resultado com números, ganhos, melhoria, redução de problema ou aprendizado.
-
-Regras:
-- Os blocos S, T, A e R devem aparecer escritos.
-- Cada bloco deve ter 1 ou 2 linhas.
-- Não responder em texto corrido.
-- Não pode faltar nenhuma das quatro partes.
-"""
-
-    elif tipo == "tecnica":
-        prompt_extra = """
-A pergunta é técnica.
-
-Responder de forma direta:
-- lógica simples
-- passos curtos
-- ferramenta usada
-- código apenas se necessário
-"""
-
-    else:
-        prompt_extra = """
-Responder de forma clara, curta, natural e conectada à vaga.
-"""
 
     with st.spinner("Gerando resposta estratégica..."):
+
         resposta = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {
                     "role": "system",
                     "content": f"""
-Responda como um humano em entrevista.
+Responda em tom de conversa.
 
-Regras gerais:
-- Seja claro, direto e natural
-- Não invente informação
-- Não repita conteúdo
-- Use o currículo e a vaga como base
-- Seja objetivo
+A resposta deve conter:
 
-{prompt_extra}
+• KPI relacionado à vaga
+• ferramentas utilizadas
+• como a análise é feita
+• qual resultado isso gera
+
+Usar informações da vaga, empresa e currículo.
 """
                 },
                 {
@@ -316,7 +191,7 @@ Regras gerais:
                     "content": f"""
 Empresa: {empresa}
 
-Descrição da vaga:
+Vaga:
 {vaga}
 
 Currículo:
@@ -326,114 +201,31 @@ Pergunta:
 {st.session_state.transcricao}
 """
                 }
-            ],
-            max_tokens=260
+            ]
         )
 
-        resposta_texto = resposta.choices[0].message.content.strip()
+        st.session_state.resposta = resposta.choices[0].message.content
 
-        if tipo == "star" and not validar_star(resposta_texto):
-            with st.spinner("Ajustando resposta para o formato STAR..."):
-                reescrita = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": """
-Reescreva a resposta obrigatoriamente em STAR visível:
 
-S (Situação):
-...
+# -------------------------
+# TRANSCRIÇÃO
+# -------------------------
 
-T (Tarefa):
-...
+st.subheader("Transcrição da pergunta")
 
-A (Ação):
-...
+st.text_area(
+    "Pergunta detectada",
+    value=st.session_state.transcricao,
+    height=100
+)
 
-R (Resultado):
-...
-
-Regras:
-- Não inventar informação
-- Cada bloco deve ter 1 ou 2 linhas
-- Resposta curta e objetiva
-- Manter aderência ao currículo e à pergunta
-"""
-                        },
-                        {
-                            "role": "user",
-                            "content": f"""
-Pergunta:
-{st.session_state.transcricao}
-
-Resposta atual:
-{resposta_texto}
-"""
-                        }
-                    ],
-                    max_tokens=260
-                )
-
-                resposta_texto = reescrita.choices[0].message.content.strip()
-
-        st.session_state.resposta = resposta_texto
-
-        ferramentas_resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": """
-Analise a resposta e identifique as ferramentas utilizadas, citadas ou implícitas.
-
-Regras:
-- Liste somente ferramentas que façam sentido no contexto
-- Explique para que serviram na resposta
-- Não inventar ferramentas fora do contexto
-- Máximo 5 itens
-
-Formato:
-Ferramenta - para que serviu
-"""
-                },
-                {
-                    "role": "user",
-                    "content": f"""
-Resposta:
-{st.session_state.resposta}
-
-Vaga:
-{vaga}
-"""
-                }
-            ],
-            max_tokens=180
-        )
-
-        st.session_state.ferramentas_resposta = ferramentas_resp.choices[0].message.content.strip()
-
-# ------------------------------
+# -------------------------
 # RESPOSTA
-# ------------------------------
+# -------------------------
 
 st.subheader("Resposta estratégica")
 
 st.text_area(
     "Resposta baseada na vaga, currículo e pergunta",
     value=st.session_state.resposta,
-    height=240
-)
-
-# ------------------------------
-# QUADRO DE FERRAMENTAS
-# ------------------------------
-
-if st.session_state.ferramentas_resposta:
-    st.subheader("Ferramentas utilizadas na resposta")
-
-    st.text_area(
-        "Ferramentas e para que serviram",
-        value=st.session_state.ferramentas_resposta,
-        height=140
-    )
+    height=250
