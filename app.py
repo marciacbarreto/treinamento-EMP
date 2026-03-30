@@ -1,210 +1,211 @@
-import streamlit as st
-import io
-import hashlib
+import sounddevice as sd
+import numpy as np
+import queue
 import time
+import threading
+import whisper
 from openai import OpenAI
-from audio_recorder_streamlit import audio_recorder
-import PyPDF2
-import docx
 
-# ------------------------------
-# CONFIGURAÇÃO
-# ------------------------------
-st.set_page_config(page_title="Treinamento EMP PRO", layout="wide")
+# =========================
+# CONFIGURAÇÕES
+# =========================
+SAMPLE_RATE = 16000
+CHUNK_DURATION = 2  # segundos por fragmento
+MIN_WORDS_TO_ANSWER = 8
+PAUSE_THRESHOLD = 1.5  # segundos de silêncio para considerar pergunta "completa"
 
-# ------------------------------
-# ESTADO
-# ------------------------------
-defaults = {
-    "transcricao": "",
-    "resposta": "",
-    "cv_text": "",
-    "last_audio_hash": "",
-    "buffer": "",
-    "last_update": time.time(),
-    "history": [],
-    "resposta_parcial": ""
+# =========================
+# FILAS E ESTADO
+# =========================
+audio_queue = queue.Queue()
+text_queue = queue.Queue()
+
+class QuestionBuffer:
+    def __init__(self):
+        self.text = ""
+        self.last_update = time.time()
+
+    def update(self, fragment):
+        self.text += " " + fragment
+        self.last_update = time.time()
+
+    def is_ready(self):
+        words = len(self.text.split())
+        time_since_last = time.time() - self.last_update
+        return words >= MIN_WORDS_TO_ANSWER and time_since_last > PAUSE_THRESHOLD
+
+    def reset(self):
+        self.text = ""
+
+buffer = QuestionBuffer()
+
+# =========================
+# CONTEXTO (PERSONALIZE)
+# =========================
+context = {
+    "cv": """
+    Experiência em gestão de processos, indicadores, liderança de equipe,
+    melhoria contínua, análise de dados e dashboards.
+    """,
+    "job": """
+    Vaga exige liderança, análise de performance, melhoria operacional,
+    tomada de decisão baseada em dados e comunicação com diretoria.
+    """
 }
 
-for k, v in defaults.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
+# =========================
+# MODELOS
+# =========================
+whisper_model = whisper.load_model("base")
+client = OpenAI(api_key="SUA_API_KEY_AQUI")
 
-# ------------------------------
-# OPENAI
-# ------------------------------
-def get_client():
-    api_key = st.secrets.get("OPENAI_API_KEY", "")
-    return OpenAI(api_key=api_key)
+# =========================
+# CAPTURA DE ÁUDIO
+# =========================
+def audio_callback(indata, frames, time_info, status):
+    audio_queue.put(indata.copy())
 
-client = get_client()
+def start_audio_stream():
+    stream = sd.InputStream(
+        samplerate=SAMPLE_RATE,
+        channels=1,
+        callback=audio_callback
+    )
+    stream.start()
+    print("🎤 Capturando áudio...")
+    return stream
 
-# ------------------------------
-# CV
-# ------------------------------
-def extrair_texto_cv(uploaded_file):
-    if uploaded_file is None:
-        return ""
+# =========================
+# TRANSCRIÇÃO
+# =========================
+def transcribe_worker():
+    while True:
+        if not audio_queue.empty():
+            chunk = audio_queue.get()
 
-    name = uploaded_file.name.lower()
+            # Converter para formato whisper
+            audio_np = np.squeeze(chunk)
 
-    if name.endswith(".pdf"):
-        pdf = PyPDF2.PdfReader(uploaded_file)
-        return "\n".join([p.extract_text() for p in pdf.pages if p.extract_text()])
+            try:
+                result = whisper_model.transcribe(audio_np, fp16=False)
+                text = result["text"].strip()
 
-    elif name.endswith(".docx"):
-        doc = docx.Document(uploaded_file)
-        return "\n".join([p.text for p in doc.paragraphs])
+                if text:
+                    text_queue.put(text)
+                    print(f"📝 Fragmento: {text}")
 
-    else:
-        return uploaded_file.read().decode("utf-8", errors="ignore")
+            except Exception as e:
+                print("Erro na transcrição:", e)
 
-# ------------------------------
-# UI
-# ------------------------------
-st.title("Treinamento EMP PRO (Tempo Real)")
+# =========================
+# DETECÇÃO DE PERGUNTA
+# =========================
+def is_question(text):
+    triggers = [
+        "tell me", "how", "why", "what", "describe",
+        "can you", "do you", "have you", "?"
+    ]
+    text_lower = text.lower()
+    return any(trigger in text_lower for trigger in triggers)
 
-empresa = st.text_input("Empresa")
-vaga = st.text_area("Descrição da vaga")
+# =========================
+# CLASSIFICAÇÃO
+# =========================
+def classify_question(text):
+    text_lower = text.lower()
 
-uploaded_cv = st.file_uploader("Currículo", type=["pdf","docx","txt"])
-
-if uploaded_cv:
-    st.session_state.cv_text = extrair_texto_cv(uploaded_cv)
-
-# ------------------------------
-# PREDIÇÃO
-# ------------------------------
-def prever_intencao(texto):
-    texto = texto.lower()
-
-    if "tell me about" in texto:
+    if "tell me about a time" in text_lower:
         return "behavioral"
-    if "how" in texto:
+    elif "how would you" in text_lower:
         return "situational"
-    if "why" in texto:
-        return "reasoning"
+    elif "improve" in text_lower or "process" in text_lower:
+        return "process"
+    elif "team" in text_lower or "leader" in text_lower:
+        return "leadership"
+    else:
+        return "general"
 
-    return "general"
-
-# ------------------------------
-# PROMPT DINÂMICO
-# ------------------------------
-def build_prompt(pergunta):
+# =========================
+# PROMPT
+# =========================
+def build_prompt(question, context, q_type):
     return f"""
-Você está em uma entrevista.
+You are a professional job candidate in a live interview.
 
-Pergunta:
-{pergunta}
+Question:
+{question}
 
-Empresa:
-{empresa}
+Question Type:
+{q_type}
 
-Vaga:
-{vaga}
+Candidate Background:
+{context['cv']}
 
-Currículo:
-{st.session_state.cv_text}
+Job Requirements:
+{context['job']}
 
-Responda:
-- Natural
-- Curto
-- Como humano
-- Sem parecer IA
+Instructions:
+- Answer naturally as spoken language
+- Be concise (3 to 5 sentences)
+- Be confident and professional
+- Use real or plausible examples
+- Include results or impact if possible
+- Do NOT explain reasoning
+- Do NOT use bullet points
+
+Answer:
 """
 
-# ------------------------------
-# RESPOSTA
-# ------------------------------
-def gerar_resposta(pergunta):
-    prompt = build_prompt(pergunta)
-
+# =========================
+# LLM
+# =========================
+def generate_answer(prompt):
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-4.1",
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=120
+        temperature=0.7
     )
+    return response.choices[0].message.content.strip()
 
-    return response.choices[0].message.content
+# =========================
+# PROCESSAMENTO PRINCIPAL
+# =========================
+def processing_loop():
+    while True:
+        if not text_queue.empty():
+            fragment = text_queue.get()
 
-# ------------------------------
-# UI DE RESPOSTA DINÂMICA
-# ------------------------------
-placeholder_resposta = st.empty()
+            buffer.update(fragment)
+            current_text = buffer.text
 
-# ------------------------------
-# ÁUDIO
-# ------------------------------
-audio = audio_recorder(text="Gravar pergunta")
+            print(f"🧠 Buffer atual: {current_text}")
 
-if audio:
-    audio_hash = hashlib.sha1(audio).hexdigest()
+            if is_question(current_text):
+                q_type = classify_question(current_text)
 
-    if audio_hash != st.session_state.last_audio_hash:
+                if buffer.is_ready():
+                    print("✅ Pergunta considerada completa")
 
-        st.session_state.last_audio_hash = audio_hash
+                    prompt = build_prompt(current_text, context, q_type)
+                    answer = generate_answer(prompt)
 
-        audio_file = io.BytesIO(audio)
-        audio_file.name = "audio.wav"
+                    print("\n💬 RESPOSTA:")
+                    print(answer)
+                    print("-" * 50)
 
-        transcricao = client.audio.transcriptions.create(
-            model="whisper-1",
-            file=audio_file
-        )
+                    buffer.reset()
 
-        texto = transcricao.text
+# =========================
+# MAIN
+# =========================
+def main():
+    start_audio_stream()
 
-        # ------------------------------
-        # BUFFER DE FRAGMENTOS
-        # ------------------------------
-        st.session_state.buffer += " " + texto
-        st.session_state.last_update = time.time()
+    threading.Thread(target=transcribe_worker, daemon=True).start()
+    threading.Thread(target=processing_loop, daemon=True).start()
 
-        buffer_texto = st.session_state.buffer.strip()
+    while True:
+        time.sleep(1)
 
-        st.subheader("🧠 Pergunta em construção")
-        st.write(buffer_texto)
-
-        # ------------------------------
-        # RESPOSTA ANTECIPADA
-        # ------------------------------
-        if len(buffer_texto.split()) > 4:
-
-            resposta_parcial = gerar_resposta(buffer_texto)
-
-            st.session_state.resposta_parcial = resposta_parcial
-
-            placeholder_resposta.markdown(
-                f"💬 **Resposta em tempo real:**\n\n{resposta_parcial}"
-            )
-
-# ------------------------------
-# FINALIZAÇÃO (SIMULA VAD)
-# ------------------------------
-tempo_parado = time.time() - st.session_state.last_update
-
-if st.session_state.buffer and tempo_parado > 2:
-
-    pergunta_final = st.session_state.buffer.strip()
-
-    st.subheader("✅ Pergunta final detectada")
-    st.write(pergunta_final)
-
-    resposta_final = gerar_resposta(pergunta_final)
-
-    st.session_state.resposta = resposta_final
-
-    placeholder_resposta.markdown(
-        f"🎯 **Resposta final:**\n\n{resposta_final}"
-    )
-
-    # ------------------------------
-    # HISTÓRICO
-    # ------------------------------
-    st.session_state.history.append({
-        "pergunta": pergunta_final,
-        "resposta": resposta_final
-    })
-
-    # Reset
-    st.session_state.buffer = ""
+if __name__ == "__main__":
+    main()
