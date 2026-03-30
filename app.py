@@ -251,23 +251,33 @@ if st.session_state.transcricao:
 
     with st.spinner("Gerando resposta estratégica..."):
         resposta = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4.1-mini",
             messages=[
                 {
                     "role": "system",
                     "content": f"""
-Responda como um humano em entrevista.
+Responda como um candidato experiente em entrevista.
 
-Regras gerais:
-- Fale como uma pessoa real, não como texto perfeito
-- Evite frases muito estruturadas ou ensaiadas
-- Traga o problema de forma concreta
-- Explique o que você fez e como fez
-- Mostre decisão
-- Conecte ação com impacto
-- Não invente informação
-- Use currículo e vaga
-- Seja direto, mas não superficial
+REGRAS CRÍTICAS (NÃO QUEBRAR):
+- Resposta em formato de narrativa contínua (como uma história)
+- Não usar estrutura em tópicos ou blocos
+- Não parecer texto ensaiado ou IA
+- Soar como fala natural, direta e confiante
+- Usar exemplos reais do currículo (sem inventar)
+- Mostrar evolução de carreira (começo → hoje)
+- Demonstrar protagonismo (liderar, conduzir, puxar)
+- Conectar naturalmente com a vaga (sem repetir descrição)
+- Evitar palavras genéricas como "sou dedicado", "sou proativo"
+
+ESTILO:
+- Linguagem simples, humana e direta
+- Frases conectadas (como conversa)
+- Tom de gerente (ownership e decisão)
+- Máximo de 5 a 7 linhas
+- Sem introduções genéricas
+
+OBJETIVO:
+A resposta deve parecer continuação da entrevista, não algo decorado.
 
 {prompt_extra}
 """
@@ -282,7 +292,7 @@ Pergunta: {st.session_state.transcricao}
 """
                 }
             ],
-            max_tokens=260
+            max_tokens=120
         )
 
         st.session_state.resposta = resposta.choices[0].message.content.strip()
