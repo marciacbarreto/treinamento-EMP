@@ -14,13 +14,13 @@ import docx
 st.set_page_config(page_title="Treinamento EMP", layout="wide")
 
 # ------------------------------
-# CSS - FONTE 11
+# CSS - FONTE 12
 # ------------------------------
 
 st.markdown("""
 <style>
 div[data-testid="stTextArea"] textarea {
-    font-size: 11px !important;
+    font-size: 12px !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -82,14 +82,12 @@ def tipo_pergunta(texto: str) -> str:
 
     t = texto.lower().strip()
 
-    # Trajetória / apresentação
     if any(p in t for p in [
         "trajetoria", "trajetória", "fale sobre você", "conte sobre você",
         "apresente-se", "me fale da sua carreira", "conte sua carreira"
     ]):
         return "trajetoria"
 
-    # STAR / comportamental
     if any(p in t for p in [
         "conte um case", "me conte um case", "fale de um case",
         "conte uma situação", "me fale de uma situação",
@@ -99,7 +97,6 @@ def tipo_pergunta(texto: str) -> str:
     ]):
         return "star"
 
-    # Técnica
     if any(p in t for p in [
         "sql", "power bi", "dashboard", "dados", "query", "processo",
         "como fazer", "como funciona", "fluxo", "arquitetura", "indicador",
@@ -155,6 +152,40 @@ with col2:
         st.success("Currículo carregado")
 
 # ------------------------------
+# BOTÕES DE CONTROLE
+# ------------------------------
+
+colb1, colb2, colb3 = st.columns(3)
+
+with colb1:
+    iniciar = st.button("Iniciar")
+
+with colb2:
+    atualizar = st.button("Atualizar")
+
+with colb3:
+    encerrar = st.button("Encerrar")
+
+if "rodando" not in st.session_state:
+    st.session_state.rodando = False
+
+if iniciar:
+    st.session_state.rodando = True
+
+if encerrar:
+    st.session_state.rodando = False
+    st.session_state.transcricao = ""
+    st.session_state.resposta = ""
+    st.session_state.ferramentas_resposta = ""
+
+if atualizar:
+    st.experimental_rerun()
+
+if not st.session_state.rodando:
+    st.info("Clique em Iniciar para começar")
+    st.stop()
+
+# ------------------------------
 # PERGUNTA DA ENTREVISTA
 # ------------------------------
 
@@ -207,61 +238,16 @@ if st.session_state.transcricao:
     tipo = tipo_pergunta(st.session_state.transcricao)
 
     if tipo == "trajetoria":
-        prompt_extra = """
-A pergunta é de trajetória/apresentação.
-
-Responda como narrativa profissional, sem STAR.
-Estrutura:
-- início da carreira
-- evolução
-- experiências mais relevantes
-- momento atual
-- conexão com a vaga
-
-A resposta deve ser fluida, natural e objetiva.
-"""
+        prompt_extra = """A pergunta é de trajetória..."""
 
     elif tipo == "star":
-        prompt_extra = """
-A pergunta é comportamental/case.
-
-Responder obrigatoriamente neste formato visível:
-
-S (Situação):
-- Contextualize rapidamente onde e quando aconteceu.
-
-T (Tarefa):
-- Explique qual era o problema ou desafio específico.
-
-A (Ação):
-- Descreva exatamente o que você fez.
-- Foque no "eu", não apenas no "nós".
-
-R (Resultado):
-- Mostre o resultado com números, ganhos, melhoria, redução de problema ou aprendizado.
-
-Regras:
-- Os blocos S, T, A e R devem aparecer escritos.
-- Cada bloco deve ter 1 ou 2 linhas.
-- Não responder em texto corrido.
-- Não pode faltar nenhuma das quatro partes.
-"""
+        prompt_extra = """A pergunta é comportamental/case..."""
 
     elif tipo == "tecnica":
-        prompt_extra = """
-A pergunta é técnica.
-
-Responder de forma direta:
-- lógica simples
-- passos curtos
-- ferramenta usada
-- código apenas se necessário
-"""
+        prompt_extra = """A pergunta é técnica..."""
 
     else:
-        prompt_extra = """
-Responder de forma clara, curta, natural e conectada à vaga.
-"""
+        prompt_extra = """Responder de forma clara, curta, natural e conectada à vaga."""
 
     with st.spinner("Gerando resposta estratégica..."):
         resposta = client.chat.completions.create(
@@ -273,11 +259,15 @@ Responder de forma clara, curta, natural e conectada à vaga.
 Responda como um humano em entrevista.
 
 Regras gerais:
-- Seja claro, direto e natural
+- Fale como uma pessoa real, não como texto perfeito
+- Evite frases muito estruturadas ou ensaiadas
+- Traga o problema de forma concreta
+- Explique o que você fez e como fez
+- Mostre decisão
+- Conecte ação com impacto
 - Não invente informação
-- Não repita conteúdo
-- Use o currículo e a vaga como base
-- Seja objetivo
+- Use currículo e vaga
+- Seja direto, mas não superficial
 
 {prompt_extra}
 """
@@ -286,108 +276,16 @@ Regras gerais:
                     "role": "user",
                     "content": f"""
 Empresa: {empresa}
-
-Descrição da vaga:
-{vaga}
-
-Currículo:
-{st.session_state.cv_text}
-
-Pergunta:
-{st.session_state.transcricao}
+Vaga: {vaga}
+Currículo: {st.session_state.cv_text}
+Pergunta: {st.session_state.transcricao}
 """
                 }
             ],
             max_tokens=260
         )
 
-        resposta_texto = resposta.choices[0].message.content.strip()
-
-        # Reescrita automática se for STAR e não vier no formato correto
-        if tipo == "star" and not validar_star(resposta_texto):
-            with st.spinner("Ajustando resposta para o formato STAR..."):
-                reescrita = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": """
-Reescreva a resposta obrigatoriamente em STAR visível:
-
-S (Situação):
-...
-
-T (Tarefa):
-...
-
-A (Ação):
-...
-
-R (Resultado):
-...
-
-Regras:
-- Não inventar informação
-- Cada bloco deve ter 1 ou 2 linhas
-- Resposta curta e objetiva
-- Manter aderência ao currículo e à pergunta
-"""
-                        },
-                        {
-                            "role": "user",
-                            "content": f"""
-Pergunta:
-{st.session_state.transcricao}
-
-Resposta atual:
-{resposta_texto}
-"""
-                        }
-                    ],
-                    max_tokens=260
-                )
-
-                resposta_texto = reescrita.choices[0].message.content.strip()
-
-        st.session_state.resposta = resposta_texto
-
-        # ------------------------------
-        # FERRAMENTAS UTILIZADAS NA RESPOSTA
-        # ------------------------------
-
-        ferramentas_resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": """
-Analise a resposta e identifique as ferramentas utilizadas, citadas ou implícitas.
-
-Regras:
-- Liste somente ferramentas que façam sentido no contexto
-- Explique para que serviram na resposta
-- Não inventar ferramentas fora do contexto
-- Máximo 5 itens
-
-Formato:
-Ferramenta - para que serviu
-"""
-                },
-                {
-                    "role": "user",
-                    "content": f"""
-Resposta:
-{st.session_state.resposta}
-
-Vaga:
-{vaga}
-"""
-                }
-            ],
-            max_tokens=180
-        )
-
-        st.session_state.ferramentas_resposta = ferramentas_resp.choices[0].message.content.strip()
+        st.session_state.resposta = resposta.choices[0].message.content.strip()
 
 # ------------------------------
 # RESPOSTA
@@ -400,16 +298,3 @@ st.text_area(
     value=st.session_state.resposta,
     height=240
 )
-
-# ------------------------------
-# QUADRO DE FERRAMENTAS
-# ------------------------------
-
-if st.session_state.ferramentas_resposta:
-    st.subheader("Ferramentas utilizadas na resposta")
-
-    st.text_area(
-        "Ferramentas e para que serviram",
-        value=st.session_state.ferramentas_resposta,
-        height=140
-    )
