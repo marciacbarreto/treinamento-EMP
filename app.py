@@ -251,33 +251,27 @@ if st.session_state.transcricao:
 
     with st.spinner("Gerando resposta estratégica..."):
         resposta = client.chat.completions.create(
-            model="gpt-4.1-mini",
+            model="gpt-4o-mini",
             messages=[
                 {
                     "role": "system",
                     "content": f"""
 Responda como um candidato experiente em entrevista.
 
-REGRAS CRÍTICAS (NÃO QUEBRAR):
+REGRAS:
 - Resposta em formato de narrativa contínua (como uma história)
-- Não usar estrutura em tópicos ou blocos
-- Não parecer texto ensaiado ou IA
-- Soar como fala natural, direta e confiante
-- Usar exemplos reais do currículo (sem inventar)
-- Mostrar evolução de carreira (começo → hoje)
-- Demonstrar protagonismo (liderar, conduzir, puxar)
-- Conectar naturalmente com a vaga (sem repetir descrição)
-- Evitar palavras genéricas como "sou dedicado", "sou proativo"
+- Não usar tópicos ou estrutura engessada
+- Soar como fala natural, não como texto de IA
+- Usar exemplos reais do currículo
+- Mostrar evolução da trajetória (começo → hoje)
+- Demonstrar protagonismo (conduzir, puxar, liderar)
+- Conectar com a vaga de forma natural
+- Linguagem humana, direta, enxuta e clara
+- Resposta entre 5 a 7 linhas
 
-ESTILO:
-- Linguagem simples, humana e direta
-- Frases conectadas (como conversa)
-- Tom de gerente (ownership e decisão)
-- Máximo de 5 a 7 linhas
-- Sem introduções genéricas
-
-OBJETIVO:
-A resposta deve parecer continuação da entrevista, não algo decorado.
+ESTILO ESPERADO (REFERÊNCIA):
+“Minha trajetória sempre foi muito próxima da operação e dos resultados...
+...é exatamente esse tipo de responsabilidade que vejo nessa posição.”
 
 {prompt_extra}
 """
