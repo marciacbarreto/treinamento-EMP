@@ -1,231 +1,211 @@
-import streamlit as st
-import io
-import hashlib
+import sounddevice as sd
+import numpy as np
+import queue
+import time
+import threading
+import whisper
 from openai import OpenAI
-from audio_recorder_streamlit import audio_recorder
-import PyPDF2
-import docx
 
-st.set_page_config(page_title="Treinamento EMP", layout="wide")
+# =========================
+# CONFIGURAÇÕES
+# =========================
+SAMPLE_RATE = 16000
+CHUNK_DURATION = 2  # segundos por fragmento
+MIN_WORDS_TO_ANSWER = 8
+PAUSE_THRESHOLD = 1.5  # segundos de silêncio para considerar pergunta "completa"
 
-# -------------------------
-# ESTADO DA SESSÃO
-# -------------------------
+# =========================
+# FILAS E ESTADO
+# =========================
+audio_queue = queue.Queue()
+text_queue = queue.Queue()
 
-defaults = {
-    "transcricao": "",
-    "resposta": "",
-    "cv_text": "",
-    "last_audio_hash": ""
+class QuestionBuffer:
+    def __init__(self):
+        self.text = ""
+        self.last_update = time.time()
+
+    def update(self, fragment):
+        self.text += " " + fragment
+        self.last_update = time.time()
+
+    def is_ready(self):
+        words = len(self.text.split())
+        time_since_last = time.time() - self.last_update
+        return words >= MIN_WORDS_TO_ANSWER and time_since_last > PAUSE_THRESHOLD
+
+    def reset(self):
+        self.text = ""
+
+buffer = QuestionBuffer()
+
+# =========================
+# CONTEXTO (PERSONALIZE)
+# =========================
+context = {
+    "cv": """
+    Experiência em gestão de processos, indicadores, liderança de equipe,
+    melhoria contínua, análise de dados e dashboards.
+    """,
+    "job": """
+    Vaga exige liderança, análise de performance, melhoria operacional,
+    tomada de decisão baseada em dados e comunicação com diretoria.
+    """
 }
 
-for k, v in defaults.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
+# =========================
+# MODELOS
+# =========================
+whisper_model = whisper.load_model("base")
+client = OpenAI(api_key="SUA_API_KEY_AQUI")
 
+# =========================
+# CAPTURA DE ÁUDIO
+# =========================
+def audio_callback(indata, frames, time_info, status):
+    audio_queue.put(indata.copy())
 
-# -------------------------
-# CLIENTE OPENAI
-# -------------------------
+def start_audio_stream():
+    stream = sd.InputStream(
+        samplerate=SAMPLE_RATE,
+        channels=1,
+        callback=audio_callback
+    )
+    stream.start()
+    print("🎤 Capturando áudio...")
+    return stream
 
-def get_client():
-    api_key = st.secrets.get("OPENAI_API_KEY", "")
-    return OpenAI(api_key=api_key)
-
-
-# -------------------------
-# EXTRAIR TEXTO DO CV
-# -------------------------
-
-def extrair_texto_cv(uploaded_file):
-
-    if uploaded_file is None:
-        return ""
-
-    name = uploaded_file.name.lower()
-
-    if name.endswith(".pdf"):
-        pdf = PyPDF2.PdfReader(uploaded_file)
-        return "\n".join([p.extract_text() for p in pdf.pages if p.extract_text()])
-
-    elif name.endswith(".docx"):
-        doc = docx.Document(uploaded_file)
-        return "\n".join([p.text for p in doc.paragraphs])
-
-    else:
-        return uploaded_file.read().decode("utf-8", errors="ignore")
-
-
-# -------------------------
-# INTERFACE
-# -------------------------
-
-st.title("Treinamento EMP")
-
-# EMPRESA
-empresa = st.text_input("Empresa")
-
-# VAGA + CURRÍCULO
-col1, col2 = st.columns(2)
-
-with col1:
-    vaga = st.text_area("Descrição da vaga", height=200)
-
-with col2:
-    uploaded_cv = st.file_uploader("Currículo", type=["pdf", "docx", "txt"])
-
-    if uploaded_cv:
-        st.session_state.cv_text = extrair_texto_cv(uploaded_cv)
-        st.success("Currículo carregado")
-
-# -------------------------
-# FERRAMENTAS
-# -------------------------
-
-st.subheader("Ferramentas que a empresa trabalha (Explicação)")
-
-st.info("""
-Jira (gestão de backlog e tarefas ágeis) /
-Confluence (documentação e governança de processos) /
-Miro (mapas colaborativos e desenho de jornadas) /
-Google Analytics (análise de comportamento no e-commerce) /
-Power BI (monitoramento de indicadores e dashboards) /
-Adobe Experience Manager (gestão de conteúdo digital) /
-Slack (comunicação entre áreas) /
-ChatGPT (IA para análise e otimização de processos)
-""")
-
-# -------------------------
-# BOTÕES
-# -------------------------
-
-colb1, colb2, colb3 = st.columns(3)
-
-with colb1:
-    iniciar = st.button("Iniciar")
-
-with colb2:
-    atualizar = st.button("Atualizar")
-
-with colb3:
-    encerrar = st.button("Encerrar")
-
-st.divider()
-
-# -------------------------
-# PERGUNTA DA ENTREVISTA
-# -------------------------
-
-st.subheader("Pergunta da entrevista")
-
-# campo para digitar pergunta
-pergunta_digitada = st.text_input(
-    "Digite a pergunta ou use o microfone"
-)
-
-# microfone
-audio = audio_recorder(text="Click to record")
-
-client = get_client()
-
-# -------------------------
-# SE PERGUNTA FOR DIGITADA
-# -------------------------
-
-if pergunta_digitada:
-
-    st.session_state.transcricao = pergunta_digitada
-
-# -------------------------
-# SE PERGUNTA VIER DO ÁUDIO
-# -------------------------
-
-elif audio:
-
-    audio_hash = hashlib.sha1(audio).hexdigest()
-
-    if audio_hash != st.session_state.last_audio_hash:
-
-        st.session_state.last_audio_hash = audio_hash
-
-        with st.spinner("Transcrevendo pergunta..."):
-
-            audio_file = io.BytesIO(audio)
-            audio_file.name = "audio.wav"
-
-            transcricao = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=audio_file
-            )
-
-            st.session_state.transcricao = transcricao.text
-
-# -------------------------
-# GERAR RESPOSTA
-# -------------------------
-
-if st.session_state.transcricao:
-
-    with st.spinner("Gerando resposta estratégica..."):
-
-        resposta = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": f"""
-Responda em tom de conversa.
-
-A resposta deve conter:
-
-• KPI relacionado à vaga
-• ferramentas utilizadas
-• como a análise é feita
-• qual resultado isso gera
-
-Usar informações da vaga, empresa e currículo.
-"""
-                },
-                {
-                    "role": "user",
-                    "content": f"""
-Empresa: {empresa}
-
-Vaga:
-{vaga}
-
-Currículo:
-{st.session_state.cv_text}
-
-Pergunta:
-{st.session_state.transcricao}
-"""
-                }
-            ]
-        )
-
-        st.session_state.resposta = resposta.choices[0].message.content
-
-
-# -------------------------
+# =========================
 # TRANSCRIÇÃO
-# -------------------------
+# =========================
+def transcribe_worker():
+    while True:
+        if not audio_queue.empty():
+            chunk = audio_queue.get()
 
-st.subheader("Transcrição da pergunta")
+            # Converter para formato whisper
+            audio_np = np.squeeze(chunk)
 
-st.text_area(
-    "Pergunta detectada",
-    value=st.session_state.transcricao,
-    height=100
-)
+            try:
+                result = whisper_model.transcribe(audio_np, fp16=False)
+                text = result["text"].strip()
 
-# -------------------------
-# RESPOSTA
-# -------------------------
+                if text:
+                    text_queue.put(text)
+                    print(f"📝 Fragmento: {text}")
 
-st.subheader("Resposta estratégica")
+            except Exception as e:
+                print("Erro na transcrição:", e)
 
-st.text_area(
-    "Resposta baseada na vaga, currículo e pergunta",
-    value=st.session_state.resposta,
-    height=250
+# =========================
+# DETECÇÃO DE PERGUNTA
+# =========================
+def is_question(text):
+    triggers = [
+        "tell me", "how", "why", "what", "describe",
+        "can you", "do you", "have you", "?"
+    ]
+    text_lower = text.lower()
+    return any(trigger in text_lower for trigger in triggers)
+
+# =========================
+# CLASSIFICAÇÃO
+# =========================
+def classify_question(text):
+    text_lower = text.lower()
+
+    if "tell me about a time" in text_lower:
+        return "behavioral"
+    elif "how would you" in text_lower:
+        return "situational"
+    elif "improve" in text_lower or "process" in text_lower:
+        return "process"
+    elif "team" in text_lower or "leader" in text_lower:
+        return "leadership"
+    else:
+        return "general"
+
+# =========================
+# PROMPT
+# =========================
+def build_prompt(question, context, q_type):
+    return f"""
+You are a professional job candidate in a live interview.
+
+Question:
+{question}
+
+Question Type:
+{q_type}
+
+Candidate Background:
+{context['cv']}
+
+Job Requirements:
+{context['job']}
+
+Instructions:
+- Answer naturally as spoken language
+- Be concise (3 to 5 sentences)
+- Be confident and professional
+- Use real or plausible examples
+- Include results or impact if possible
+- Do NOT explain reasoning
+- Do NOT use bullet points
+
+Answer:
+"""
+
+# =========================
+# LLM
+# =========================
+def generate_answer(prompt):
+    response = client.chat.completions.create(
+        model="gpt-4.1",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7
+    )
+    return response.choices[0].message.content.strip()
+
+# =========================
+# PROCESSAMENTO PRINCIPAL
+# =========================
+def processing_loop():
+    while True:
+        if not text_queue.empty():
+            fragment = text_queue.get()
+
+            buffer.update(fragment)
+            current_text = buffer.text
+
+            print(f"🧠 Buffer atual: {current_text}")
+
+            if is_question(current_text):
+                q_type = classify_question(current_text)
+
+                if buffer.is_ready():
+                    print("✅ Pergunta considerada completa")
+
+                    prompt = build_prompt(current_text, context, q_type)
+                    answer = generate_answer(prompt)
+
+                    print("\n💬 RESPOSTA:")
+                    print(answer)
+                    print("-" * 50)
+
+                    buffer.reset()
+
+# =========================
+# MAIN
+# =========================
+def main():
+    start_audio_stream()
+
+    threading.Thread(target=transcribe_worker, daemon=True).start()
+    threading.Thread(target=processing_loop, daemon=True).start()
+
+    while True:
+        time.sleep(1)
+
+if __name__ == "__main__":
+    main()
