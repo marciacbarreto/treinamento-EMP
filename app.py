@@ -256,18 +256,22 @@ if st.session_state.transcricao:
                 {
                     "role": "system",
                     "content": f"""
-Responda como um humano em entrevista.
+Responda como um candidato experiente em entrevista.
 
-Regras gerais:
-- Fale como uma pessoa real, não como texto perfeito
-- Evite frases muito estruturadas ou ensaiadas
-- Traga o problema de forma concreta
-- Explique o que você fez e como fez
-- Mostre decisão
-- Conecte ação com impacto
-- Não invente informação
-- Use currículo e vaga
-- Seja direto, mas não superficial
+REGRAS:
+- Resposta em formato de narrativa contínua (como uma história)
+- Não usar tópicos ou estrutura engessada
+- Soar como fala natural, não como texto de IA
+- Usar exemplos reais do currículo
+- Mostrar evolução da trajetória (começo → hoje)
+- Demonstrar protagonismo (conduzir, puxar, liderar)
+- Conectar com a vaga de forma natural
+- Linguagem humana, direta, enxuta e clara
+- Resposta entre 5 a 7 linhas
+
+ESTILO ESPERADO (REFERÊNCIA):
+“Minha trajetória sempre foi muito próxima da operação e dos resultados...
+...é exatamente esse tipo de responsabilidade que vejo nessa posição.”
 
 {prompt_extra}
 """
@@ -282,7 +286,7 @@ Pergunta: {st.session_state.transcricao}
 """
                 }
             ],
-            max_tokens=260
+            max_tokens=120
         )
 
         st.session_state.resposta = resposta.choices[0].message.content.strip()
